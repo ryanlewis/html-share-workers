@@ -350,6 +350,13 @@ describe('overwrite', () => {
     expect((await putHtml('/artifacts/public/c?overwrite=maybe')).status).toBe(400);
     expect(await keys()).toEqual(['a/index.html', 'b/index.html']);
   });
+
+  it('refuses an empty overwrite rather than reading it as true', async () => {
+    await putHtml('/artifacts/public/p', '<p>v1</p>');
+    expect((await putHtml('/artifacts/public/p?overwrite=', '<p>v2</p>')).status).toBe(400);
+    expect((await putHtml('/artifacts/public/p', '<p>v2</p>', { 'X-Share-Overwrite': '' })).status).toBe(400);
+    expect(await (await env.BUCKET.get('p/index.html'))?.text()).toBe('<p>v1</p>');
+  });
 });
 
 describe('slug lock', () => {
@@ -403,6 +410,26 @@ describe('slug lock', () => {
     expect((await call('/artifacts/public/site', { method: 'DELETE' })).status).toBe(404);
     expect(await keys('.locks/')).toEqual([]);
     expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
+  });
+
+  it('still returns the upload, and its password, when releasing the lock fails', async () => {
+    const failing = new Proxy(env.BUCKET, {
+      get(target, prop) {
+        if (prop === 'head') {
+          return (key: string) => (key.startsWith('.locks/') ? Promise.reject(new Error('R2 is down')) : target.head(key));
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const request = new Request(`${BASE}/artifacts/secured/s`, {
+      method: 'PUT',
+      body: HTML,
+      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'text/html' },
+    });
+    const res = await app.fetch(request, { ...env, BUCKET: failing } as Env);
+    expect(res.status).toBe(201);
+    expect((await res.json<{ password: string }>()).password).toMatch(/^[A-Za-z0-9_-]{24}$/);
   });
 
   it('does not show the lock as an artifact or a page', async () => {

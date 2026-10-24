@@ -270,7 +270,7 @@ All routes need `Authorization: Bearer <token>`. Bodies are limited to 25 MB.
 
 | Route | What it does |
 |---|---|
-| `PUT /api/artifacts/<scope>/<slug>` | Upload. Body is `text/html` (one page) or `multipart/form-data` (field name = path, must include `index.html`). Query `listed=true|false`, `title=...` (or headers `X-Share-Listed`, `X-Share-Title`). On a replace, a setting that is not sent keeps its old value; `listed=false` unlists and an empty `title=` clears the title. A new artifact is unlisted with no title. Secured: password in `X-Share-Password`, else generated and returned as `password`. Replacing a secured artifact without `X-Share-Password` keeps its password and returns `passwordUnchanged: true`; send `regenerate=true` (or header `X-Share-Password-Regenerate: 1`) to get a new generated one, which cannot be combined with `X-Share-Password`. `created` is kept and `updated` is set on a replace. An existing artifact is only replaced when the request sends `overwrite=true` (or header `X-Share-Overwrite: 1`); without it the PUT is a 409 and nothing changes. 201 when new, 200 when replaced, 409 when the artifact exists and `overwrite` is not set, when another PUT or DELETE of the same slug is in progress, or when a gated slug would nest inside another artifact of the same gate or contain one. |
+| `PUT /api/artifacts/<scope>/<slug>` | Upload. Body is `text/html` (one page) or `multipart/form-data` (field name = path, must include `index.html`). Query `listed=true|false`, `title=...` (or headers `X-Share-Listed`, `X-Share-Title`). On a replace, a setting that is not sent keeps its old value; `listed=false` unlists and an empty `title=` clears the title. A new artifact is unlisted with no title. Secured: password in `X-Share-Password`, else generated and returned as `password`. Replacing a secured artifact without `X-Share-Password` keeps its password and returns `passwordUnchanged: true`; send `regenerate=true` (or header `X-Share-Password-Regenerate: 1`) to get a new generated one, which cannot be combined with `X-Share-Password`. `created` is kept and `updated` is set on a replace. An existing artifact is only replaced when the request sends `overwrite=true` (or header `X-Share-Overwrite: 1`); without it the PUT is a 409 and nothing changes. An empty `overwrite` is a 400. 201 when new, 200 when replaced, 409 when the artifact exists and `overwrite` is not set, when another PUT or DELETE of the same slug is in progress, or when a gated slug would nest inside another artifact of the same gate or contain one. |
 | `GET /api/artifacts[?visibility=<scope>]` | List artifacts, all or one scope. Lists gated artifacts whose gate is no longer configured, too. |
 | `GET /api/artifacts/<scope>/<slug>` | Metadata, or 404. |
 | `DELETE /api/artifacts/<scope>/<slug>` | Delete every file of the artifact. 409 when another PUT or DELETE of the same slug is in progress. |
@@ -283,6 +283,8 @@ DELETE still work on one, so a shadowed artifact can be removed.
 Errors are JSON: `{"error": "..."}`.
 
 Breaking change: before `overwrite`, a PUT to an existing slug replaced it.
-Clients that replace artifacts must now send `overwrite=true`.
+Clients that replace artifacts must now send `overwrite=true`. Deploy the
+Worker before updating the CLI: the CLI no longer checks for an existing
+slug itself, so against an older Worker it replaces one without `--force`.
 
 `cli/test.sh` runs the CLI against `wrangler dev --local` with a dummy token.
