@@ -2,13 +2,13 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
   acquireSlugLock,
-  LOCK_TTL_MS,
   artifactPrefix,
   type ArtifactMeta,
   DEFAULT_PAGE,
   gatedScope,
   InvalidKeyError,
   listArtifacts,
+  LOCK_TTL_MS,
   metaScope,
   parseCustomMetadata,
   PUBLIC,
@@ -178,7 +178,9 @@ async function withSlugLock<T>(bucket: R2Bucket, scope: Scope, slug: string, fn:
   try {
     return await fn();
   } finally {
-    await releaseSlugLock(bucket, lock);
+    // A failed release must not replace fn's result (a new password, say);
+    // the lock expires on its own.
+    await releaseSlugLock(bucket, lock).catch((err) => console.error('releasing slug lock failed', err));
   }
 }
 
@@ -259,7 +261,10 @@ api.put(
       throw new ApiError(400, 'regenerate and X-Share-Password cannot be combined');
     }
 
-    const overwrite = parseFlag(setting(c, 'overwrite', 'X-Share-Overwrite'), 'overwrite') ?? false;
+    const givenOverwrite = setting(c, 'overwrite', 'X-Share-Overwrite');
+    // Refused when empty, like regenerate: this one replaces an artifact.
+    if (givenOverwrite === '') throw new ApiError(400, 'overwrite must be true or false');
+    const overwrite = parseFlag(givenOverwrite, 'overwrite') ?? false;
     // The body is read before taking the lock, so a slow client does not hold it.
     const upload = await readUpload(c, scope, slug);
 
