@@ -17,7 +17,7 @@ command-line client in `cli/`.
 | `src/lib/gates.ts` | `parseGates()` for the `IP_GATES` config. |
 | `src/lib/cidr.ts` | IPv4 and IPv6 CIDR matching. |
 | `src/lib/password.ts` | PBKDF2-SHA256 password hashing for secured artifacts. |
-| `test/` | Vitest tests, run inside workerd with `@cloudflare/vitest-pool-workers`. |
+| `test/` | Vitest tests, run inside workerd with `@cloudflare/vitest-plugin`. |
 
 The API and serving only meet through `src/env.ts` and `src/lib/`; `src/index.ts`
 should not need changing.
