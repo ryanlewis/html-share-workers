@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
   acquireSlugLock,
+  LOCK_TTL_MS,
   artifactPrefix,
   type ArtifactMeta,
   DEFAULT_PAGE,
@@ -173,7 +174,7 @@ async function checkNesting(bucket: R2Bucket, scope: Scope, slug: string, nested
  */
 async function withSlugLock<T>(bucket: R2Bucket, scope: Scope, slug: string, fn: () => Promise<T>): Promise<T> {
   const lock = await acquireSlugLock(bucket, scope, slug);
-  if (!lock) throw new ApiError(409, `another upload or delete of "${slug}" is in progress`);
+  if (!lock) throw new ApiError(409, `another upload or delete of "${slug}" is in progress (a stale lock expires within ${LOCK_TTL_MS / 60_000} minutes)`);
   try {
     return await fn();
   } finally {
