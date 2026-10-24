@@ -354,3 +354,59 @@ export async function listArtifacts(bucket: R2Bucket, scope?: Scope, slugPrefix 
   } while (cursor);
   return found;
 }
+
+/**
+ * Per-slug upload lock. A PUT or DELETE holds it from the first read of an
+ * artifact's keys to its last write, so two requests to one slug cannot mix
+ * their files, and the overwrite check is made under it. It is an R2 object
+ * under ".locks/", which no valid slug can reach, created with a conditional
+ * put so only one request wins. It records an expiry, after which another
+ * request may take it over, so a crashed upload does not wedge the slug.
+ */
+const LOCK_PREFIX = '.locks/';
+/**
+ * How long a lock is good for. The body is read before the lock is taken,
+ * so this only has to cover the R2 writes of one upload (at most 25 MB)
+ * and the stale-key deletes, not a slow client link.
+ */
+export const LOCK_TTL_MS = 5 * 60 * 1000;
+
+export function lockKey(scope: Scope, slug: string): string {
+  return `${LOCK_PREFIX}${artifactPrefix(scope, slug).slice(0, -1)}`;
+}
+
+/** A held lock: the key and the etag of the lock object this request wrote. */
+export interface SlugLock {
+  key: string;
+  etag: string;
+}
+
+/** Takes the lock for a slug, or returns null if another request holds it. */
+export async function acquireSlugLock(bucket: R2Bucket, scope: Scope, slug: string, now = Date.now()): Promise<SlugLock | null> {
+  const key = lockKey(scope, slug);
+  const options = { customMetadata: { expires: String(now + LOCK_TTL_MS) } };
+  // R2's put returns null when the onlyIf condition fails.
+  let lock = await bucket.put(key, '', { ...options, onlyIf: new Headers({ 'If-None-Match': '*' }) });
+  if (!lock) {
+    const held = await bucket.head(key);
+    // Released between the put and the head: report it as busy rather than loop.
+    if (!held) return null;
+    const expires = Number(held.customMetadata?.expires);
+    if (Number.isFinite(expires) && expires > now) return null;
+    // Expired: take it over, but only if nobody else did first.
+    lock = await bucket.put(key, '', { ...options, onlyIf: { etagMatches: held.etag } });
+    if (!lock) return null;
+  }
+  return { key, etag: lock.etag };
+}
+
+/**
+ * Releases a lock if this request still holds it. R2 deletes cannot be
+ * conditional, so this is a head then a delete. If the lock expired and was
+ * taken over between the two, the new holder's lock is removed. That window
+ * is accepted: it needs a request to outlive LOCK_TTL_MS first.
+ */
+export async function releaseSlugLock(bucket: R2Bucket, lock: SlugLock): Promise<void> {
+  const held = await bucket.head(lock.key);
+  if (held?.etag === lock.etag) await bucket.delete(lock.key);
+}

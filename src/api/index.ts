@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import {
+  acquireSlugLock,
   artifactPrefix,
   type ArtifactMeta,
   DEFAULT_PAGE,
@@ -12,6 +13,7 @@ import {
   PUBLIC,
   putArtifactIndex,
   readArtifactMeta,
+  releaseSlugLock,
   sameScope,
   type Scope,
   scopeUrlPrefix,
@@ -165,6 +167,20 @@ async function checkNesting(bucket: R2Bucket, scope: Scope, slug: string, nested
   }
 }
 
+/**
+ * Runs fn holding the slug's lock (src/lib/artifacts.ts). 409 if another
+ * request holds it; nothing has been read or written by then.
+ */
+async function withSlugLock<T>(bucket: R2Bucket, scope: Scope, slug: string, fn: () => Promise<T>): Promise<T> {
+  const lock = await acquireSlugLock(bucket, scope, slug);
+  if (!lock) throw new ApiError(409, `another upload or delete of "${slug}" is in progress`);
+  try {
+    return await fn();
+  } finally {
+    await releaseSlugLock(bucket, lock);
+  }
+}
+
 async function readUpload(c: Context<ApiEnv>, scope: Scope, slug: string): Promise<ParsedUpload> {
   const type = (c.req.header('Content-Type') ?? '').split(';')[0]!.trim().toLowerCase();
   if (type === 'text/html') {
@@ -242,59 +258,69 @@ api.put(
       throw new ApiError(400, 'regenerate and X-Share-Password cannot be combined');
     }
 
-    const before = await scanArtifact(bucket, scope, slug);
-    await checkNesting(bucket, scope, slug, before.nested);
+    const overwrite = parseFlag(setting(c, 'overwrite', 'X-Share-Overwrite'), 'overwrite') ?? false;
+    // The body is read before taking the lock, so a slow client does not hold it.
     const upload = await readUpload(c, scope, slug);
 
-    const existing = await readArtifactMeta(bucket, scope, slug);
-    const now = new Date().toISOString();
-    // A secured replace keeps the old hash (and so the old cookies and the
-    // shared password) unless a password is given or a new one is asked for.
-    const keepHash = scope.visibility === 'secured' && existing?.pwhash !== undefined && givenPassword === undefined && !regenerate;
-    const password = scope.visibility === 'secured' && !keepHash ? (givenPassword ?? generatePassword()) : undefined;
-    const pwhash = keepHash ? existing.pwhash : password !== undefined ? await hashPassword(password) : undefined;
-    const title = givenTitle === undefined ? existing?.title : givenTitle || undefined;
-    const meta: ArtifactMeta = {
-      ...scopeFields(scope),
-      created: existing?.created ?? now,
-      updated: now,
-      listed: givenListed ?? existing?.listed ?? false,
-      uploadedBy: c.get('machine'),
-      ...(title !== undefined && { title }),
-      ...(pwhash !== undefined && { pwhash }),
-    };
+    return withSlugLock(bucket, scope, slug, async () => {
+      const before = await scanArtifact(bucket, scope, slug);
+      await checkNesting(bucket, scope, slug, before.nested);
+      const existing = await readArtifactMeta(bucket, scope, slug);
+      if (existing && !overwrite) {
+        throw new ApiError(409, `"${slug}" already exists (set overwrite=true to replace it)`);
+      }
+      const now = new Date().toISOString();
+      // A secured replace keeps the old hash (and so the old cookies and the
+      // shared password) unless a password is given or a new one is asked for.
+      const keepHash = scope.visibility === 'secured' && existing?.pwhash !== undefined && givenPassword === undefined && !regenerate;
+      const password = scope.visibility === 'secured' && !keepHash ? (givenPassword ?? generatePassword()) : undefined;
+      const pwhash = keepHash ? existing.pwhash : password !== undefined ? await hashPassword(password) : undefined;
+      const title = givenTitle === undefined ? existing?.title : givenTitle || undefined;
+      const meta: ArtifactMeta = {
+        ...scopeFields(scope),
+        created: existing?.created ?? now,
+        updated: now,
+        listed: givenListed ?? existing?.listed ?? false,
+        uploadedBy: c.get('machine'),
+        ...(title !== undefined && { title }),
+        ...(pwhash !== undefined && { pwhash }),
+      };
 
-    const check = validateMeta(meta);
-    if (!check.ok) throw new ApiError(400, check.error);
+      const check = validateMeta(meta);
+      if (!check.ok) throw new ApiError(400, check.error);
 
-    for (const asset of upload.assets) {
-      await bucket.put(asset.key, asset.body, { httpMetadata: { contentType: asset.contentType } });
-    }
-    // index.html last: a new artifact only counts as existing once it is complete.
-    const indexKey = (await putArtifactIndex(bucket, slug, upload.index, meta)).key;
-    // Then remove the old files the new upload does not have, so stale
-    // siblings do not linger. Doing this last means a failed upload leaves
-    // the old artifact in place rather than nothing.
-    const written = new Set([indexKey, ...upload.assets.map((a) => a.key)]);
-    await deleteKeys(bucket, before.keys.filter((key) => !written.has(key)));
+      for (const asset of upload.assets) {
+        await bucket.put(asset.key, asset.body, { httpMetadata: { contentType: asset.contentType } });
+      }
+      // index.html last: a new artifact only counts as existing once it is complete.
+      const indexKey = (await putArtifactIndex(bucket, slug, upload.index, meta)).key;
+      // Then remove the old files the new upload does not have, so stale
+      // siblings do not linger. Doing this last means a failed upload leaves
+      // the old artifact in place rather than nothing.
+      const written = new Set([indexKey, ...upload.assets.map((a) => a.key)]);
+      await deleteKeys(bucket, before.keys.filter((key) => !written.has(key)));
 
-    c.header('Cache-Control', 'no-store');
-    return c.json(
-      {
-        ...describe(scope, slug, meta),
-        ...(password !== undefined && givenPassword === undefined && { password }),
-        ...(keepHash && { passwordUnchanged: true }),
-      },
-      existing ? 200 : 201,
-    );
+      c.header('Cache-Control', 'no-store');
+      return c.json(
+        {
+          ...describe(scope, slug, meta),
+          ...(password !== undefined && givenPassword === undefined && { password }),
+          ...(keepHash && { passwordUnchanged: true }),
+        },
+        existing ? 200 : 201,
+      );
+    });
   },
 );
 
 api.delete(ARTIFACT, async (c) => {
   const { scope, slug } = target(c);
-  const { keys } = await scanArtifact(c.env.BUCKET, scope, slug);
-  if (keys.length === 0) throw new ApiError(404, 'artifact not found');
-  await deleteKeys(c.env.BUCKET, keys);
+  const keys = await withSlugLock(c.env.BUCKET, scope, slug, async () => {
+    const { keys } = await scanArtifact(c.env.BUCKET, scope, slug);
+    if (keys.length === 0) throw new ApiError(404, 'artifact not found');
+    await deleteKeys(c.env.BUCKET, keys);
+    return keys;
+  });
   return c.json({ deleted: true, url: artifactUrl(scope, slug), ...scopeFields(scope), slug, objects: keys.length });
 });
 
