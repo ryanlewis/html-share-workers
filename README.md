@@ -106,7 +106,8 @@ Worker answers 429 with the login form and a "too many attempts" message,
 without looking up the artifact or checking the password. Page views are
 not counted. The limit is the `LOGIN_LIMIT` rate-limit binding in
 `wrangler.toml`; Cloudflare counts per location and approximately, so treat
-it as a brake on guessing, not an exact cap.
+it as a brake on guessing, not an exact cap. If the binding is missing,
+logins return 500 rather than going unlimited.
 
 ### IP gates
 

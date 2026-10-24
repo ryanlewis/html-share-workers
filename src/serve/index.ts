@@ -320,12 +320,9 @@ async function serveSecured(c: Ctx, segments: string[], trailingSlash: boolean):
 /**
  * Counts a password attempt against the client IP (an IPv6 client's /64),
  * across all secured slugs, so spreading guesses over pages gains nothing.
- * Runs before the artifact lookup and the PBKDF2 check. Without the binding
- * there is no limit.
+ * Runs before the artifact lookup and the PBKDF2 check.
  */
-async function loginAllowed(c: Ctx): Promise<boolean> {
-  const limiter = c.env.LOGIN_LIMIT;
-  if (!limiter) return true;
+async function loginAllowed(c: Ctx, limiter: RateLimit): Promise<boolean> {
   const key = clientNetwork(c.req.header('CF-Connecting-IP') ?? '') ?? 'unknown';
   return (await limiter.limit({ key })).success;
 }
@@ -338,7 +335,12 @@ async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean):
     console.error('COOKIE_SECRET is not set; refusing secured requests');
     return htmlResponse('Secured pages are not configured.', 500);
   }
-  if (!(await loginAllowed(c))) return htmlResponse(loginPage(loginFormAction(c), 'limited'), 429);
+  const limiter = c.env.LOGIN_LIMIT;
+  if (!limiter) {
+    console.error('LOGIN_LIMIT is not bound; refusing secured logins');
+    return htmlResponse('Secured pages are not configured.', 500);
+  }
+  if (!(await loginAllowed(c, limiter))) return htmlResponse(loginPage(loginFormAction(c), 'limited'), 429);
   const meta = await readArtifactMeta(c.env.BUCKET, SECURED, parts.slug);
   if (!meta?.pwhash) return notFound();
 
