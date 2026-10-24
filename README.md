@@ -51,8 +51,22 @@ Only gated slugs may have several segments (`pr/some-repo/123`).
 | `/<slug>` | 308 to `/<slug>/` (the same for `/_/<slug>` and `/<gate>/<slug>`). |
 | `/<slug>/<path>` | The R2 object. A folder path serves its `index.html`; a folder without a trailing slash 308s to the slash form. |
 | `/<slug>/...` where slug is in `REDIRECTS` | 308 to the target, keeping the sub-path and query. Checked before the public lookup. |
+| An exact path in `REDIRECTS` (a key starting with `/`) | 308 to the target, keeping the query but not matching sub-paths. Checked first, before secured, gated and public lookups. |
 | `/_/<slug>/...` | The object if the request has a valid cookie, otherwise a password form (401). |
 | `/<gate>/<slug>/...` | For each gate in `IP_GATES`: the object if `CF-Connecting-IP` is in that gate's ranges, otherwise 403. Checked before redirects and public artifacts. |
+
+`REDIRECTS` is a JSON object of key to target. A key without a slash is a
+top-level slug: `/<slug>/...` redirects with its sub-path kept. A key starting
+with `/` is an exact path, which can have several segments and can be a gate
+root. A trailing slash on the key or the request does not matter, and an entry
+whose target is its own path is skipped. Exact-path redirects run before the
+IP check, so anyone can see where a gate root points; they reveal a path, not
+content, and the target is still gated. For example, to send `/lhv/` to the
+listing at `/lhv/index/`:
+
+```json
+{"/lhv/": "/lhv/index/"}
+```
 
 Content type comes from the object's stored `Content-Type`, then its file
 extension. Responses carry an `ETag` and answer `If-None-Match` with 304, and
