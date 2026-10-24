@@ -1,11 +1,16 @@
 /**
- * Worker bindings. Everything except BUCKET is a secret, set with
+ * Worker bindings. Everything except BUCKET and LOGIN_LIMIT is a secret, set with
  * `wrangler secret put` (or in .dev.vars locally). wrangler.toml has no
  * [vars], because a deploy would replace them.
  */
 export interface Env {
   /** Artifact storage. Key layout is in src/lib/artifacts.ts. */
   BUCKET: R2Bucket;
+  /**
+   * Rate limit on secured-page password attempts, keyed by client IP. Set in
+   * wrangler.toml. Unset means no limit.
+   */
+  LOGIN_LIMIT?: RateLimit;
   /** HMAC key for signing secured-artifact cookies. Secret. */
   COOKIE_SECRET: string;
   /**

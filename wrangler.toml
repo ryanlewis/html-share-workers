@@ -12,6 +12,14 @@ workers_dev = true
 binding = "BUCKET"
 bucket_name = "html-share"
 
+# Password attempts on secured pages: 10 a minute per client IP. Cloudflare
+# counts per location and approximately. namespace_id is any number unique
+# within the account.
+[[ratelimits]]
+name = "LOGIN_LIMIT"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
 # No [vars] block: `wrangler deploy` would replace the deployed vars with it.
 # Config is held as secrets, which survive deploys. The Worker expects:
 #   COOKIE_SECRET       HMAC key for secured-page cookies

@@ -312,9 +312,21 @@ async function serveSecured(c: Ctx, segments: string[], trailingSlash: boolean):
   const meta = await readArtifactMeta(c.env.BUCKET, SECURED, parts.slug);
   if (!meta?.pwhash) return notFound();
   if (!(await hasValidCookie(c, secret, parts.slug, meta.pwhash))) {
-    return htmlResponse(loginPage(loginFormAction(c), false), 401);
+    return htmlResponse(loginPage(loginFormAction(c)), 401);
   }
   return serveObject(c, SECURED, parts.slug, parts.path, CACHE_PRIVATE);
+}
+
+/**
+ * Counts a password attempt against the client IP, across all secured
+ * slugs, so spreading guesses over pages gains nothing. Runs before the
+ * artifact lookup and the PBKDF2 check. Without the binding there is no limit.
+ */
+async function loginAllowed(c: Ctx): Promise<boolean> {
+  const limiter = c.env.LOGIN_LIMIT;
+  if (!limiter) return true;
+  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
+  return (await limiter.limit({ key: ip })).success;
 }
 
 async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean): Promise<Response> {
@@ -325,6 +337,7 @@ async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean):
     console.error('COOKIE_SECRET is not set; refusing secured requests');
     return htmlResponse('Secured pages are not configured.', 500);
   }
+  if (!(await loginAllowed(c))) return htmlResponse(loginPage(loginFormAction(c), 'limited'), 429);
   const meta = await readArtifactMeta(c.env.BUCKET, SECURED, parts.slug);
   if (!meta?.pwhash) return notFound();
 
@@ -335,7 +348,7 @@ async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean):
     password = undefined;
   }
   const ok = typeof password === 'string' && password !== '' && (await verifyPassword(password, meta.pwhash));
-  if (!ok) return htmlResponse(loginPage(loginFormAction(c), true), 401);
+  if (!ok) return htmlResponse(loginPage(loginFormAction(c), 'wrong'), 401);
 
   const url = new URL(c.req.url);
   const location = `${url.pathname}${parts.bare ? '/' : ''}${url.search}`;

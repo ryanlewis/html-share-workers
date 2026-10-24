@@ -97,8 +97,15 @@ where the signature is HMAC-SHA256 with `COOKIE_SECRET` over the slug, the
 expiry and a SHA-256 of the artifact's current `pwhash`. Changing the
 password invalidates old cookies. Replacing an artifact without a password
 keeps its hash, so old cookies stay valid; giving or regenerating a password
-changes the hash and invalidates them. If `COOKIE_SECRET` is unset, secured pages return 500. There is no
-rate limit on password attempts yet.
+changes the hash and invalidates them. If `COOKIE_SECRET` is unset, secured pages return 500.
+
+Password attempts are limited to 10 a minute per client IP
+(`CF-Connecting-IP`), counted across all secured pages. Over the limit the
+Worker answers 429 with the login form and a "too many attempts" message,
+without looking up the artifact or checking the password. Page views are
+not counted. The limit is the `LOGIN_LIMIT` rate-limit binding in
+`wrangler.toml`; Cloudflare counts per location and approximately, so treat
+it as a brake on guessing, not an exact cap.
 
 ### IP gates
 
@@ -146,7 +153,8 @@ weak and includes a hash of the snippet, so changing the snippet changes it.
 
 ## Configuration
 
-Everything except the R2 bucket is a Worker secret: `COOKIE_SECRET`,
+Everything except the R2 bucket and the `LOGIN_LIMIT` rate limit (both in
+`wrangler.toml`, see "Secured cookies") is a Worker secret: `COOKIE_SECRET`,
 `TOKEN_<MACHINE>`, `IP_GATES`, `REDIRECTS` and `ANALYTICS_SNIPPET`. The last
 three are optional. `wrangler.toml` has no `[vars]` block. `IP_GATES` and
 `REDIRECTS` are parsed once per Worker isolate, so a bad value is logged once
