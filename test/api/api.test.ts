@@ -45,12 +45,19 @@ function callWith(bindings: Record<string, string>, path: string, token: string)
   return Promise.resolve(app.fetch(request, { ...env, ...bindings } as Env));
 }
 
-/** Logs in to a secured artifact through the serving routes; returns the Cookie header value. */
+let loginClient = 0;
+
+/**
+ * Logs in to a secured artifact through the serving routes; returns the
+ * Cookie header value. Each call uses a fresh client IP, so tests stay under
+ * the login rate limit.
+ */
 async function loginCookie(slug: string, password: string): Promise<string> {
+  loginClient++;
   const res = await exports.default.fetch(`https://share.test/_/${slug}/`, {
     method: 'POST',
     body: new URLSearchParams({ password }),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': `198.18.1.${loginClient % 256}` },
     redirect: 'manual',
   });
   expect(res.status).toBe(303);
