@@ -100,7 +100,8 @@ keeps its hash, so old cookies stay valid; giving or regenerating a password
 changes the hash and invalidates them. If `COOKIE_SECRET` is unset, secured pages return 500.
 
 Password attempts are limited to 10 a minute per client IP
-(`CF-Connecting-IP`), counted across all secured pages. Over the limit the
+(`CF-Connecting-IP`; an IPv6 client counts as its /64), counted across all
+secured pages. Over the limit the
 Worker answers 429 with the login form and a "too many attempts" message,
 without looking up the artifact or checking the password. Page views are
 not counted. The limit is the `LOGIN_LIMIT` rate-limit binding in
