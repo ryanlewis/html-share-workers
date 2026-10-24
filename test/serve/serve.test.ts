@@ -41,13 +41,25 @@ function cookieFrom(res: Response): string {
   return setCookie!.split(';')[0]!;
 }
 
-function login(slug: string, password: string, path = `/_/${slug}/`): Promise<Response> {
-  return fetchPath(path, {
-    method: 'POST',
-    body: new URLSearchParams({ password }),
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    redirect: 'manual',
-  });
+let loginClient = 0;
+
+/** A fresh client IP for each call, so tests stay under the login rate limit. */
+function nextClientIp(): string {
+  loginClient++;
+  return `203.0.113.${loginClient % 256}`;
+}
+
+function login(slug: string, password: string, path = `/_/${slug}/`, ip = nextClientIp(), overrides: Partial<Env> = {}): Promise<Response> {
+  return fetchPath(
+    path,
+    {
+      method: 'POST',
+      body: new URLSearchParams({ password }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+      redirect: 'manual',
+    },
+    overrides,
+  );
 }
 
 beforeEach(clearBucket);
@@ -549,6 +561,71 @@ describe('secured artifacts', () => {
     const res = await fetchPath('/_/deck/', {}, { COOKIE_SECRET: '' });
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain('secret deck');
+  });
+});
+
+describe('login rate limit', () => {
+  beforeEach(async () => {
+    await putArtifactIndex(env.BUCKET, 'deck', '<p>secret deck</p>', meta('secured', { pwhash: await hashPassword(PASSWORD, 1) }));
+    await putArtifactIndex(env.BUCKET, 'other', '<p>other deck</p>', meta('secured', { pwhash: await hashPassword('other', 1) }));
+  });
+
+  /** A limiter that records its keys and allows the first `allow` calls. */
+  function fakeLimiter(allow: number): RateLimit & { keys: string[] } {
+    const keys: string[] = [];
+    return {
+      keys,
+      async limit({ key }) {
+        keys.push(key);
+        return { success: keys.length <= allow };
+      },
+    };
+  }
+
+  async function expectLimited(res: Response): Promise<void> {
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Set-Cookie')).toBeNull();
+    const html = await res.text();
+    expect(html).toContain('<form method="post"');
+    expect(html).toContain('Too many attempts');
+    expect(html).not.toContain('secret deck');
+  }
+
+  it('is bound in the test Worker from wrangler.toml', () => {
+    expect(env.LOGIN_LIMIT).toBeDefined();
+  });
+
+  it('allows 10 attempts a minute from one IP, then answers 429 without checking the password', async () => {
+    const ip = '198.18.0.1';
+    for (let i = 0; i < 9; i++) expect((await login('deck', 'wrong', undefined, ip)).status).toBe(401);
+    expect((await login('deck', PASSWORD, undefined, ip)).status).toBe(303);
+    await expectLimited(await login('deck', PASSWORD, undefined, ip));
+    // The count is per IP, not per slug.
+    await expectLimited(await login('other', 'other', undefined, ip));
+    expect((await login('deck', PASSWORD, undefined, '198.18.0.2')).status).toBe(303);
+  });
+
+  it('keys on CF-Connecting-IP and stops before the password check', async () => {
+    const limiter = fakeLimiter(1);
+    expect((await login('deck', PASSWORD, undefined, '192.0.2.7', { LOGIN_LIMIT: limiter })).status).toBe(303);
+    await expectLimited(await login('deck', PASSWORD, undefined, '192.0.2.7', { LOGIN_LIMIT: limiter }));
+    expect(limiter.keys).toEqual(['192.0.2.7', '192.0.2.7']);
+  });
+
+  it('answers 429 for unknown slugs too, so the limit also covers probing', async () => {
+    await expectLimited(await login('nope', PASSWORD, undefined, '192.0.2.8', { LOGIN_LIMIT: fakeLimiter(0) }));
+  });
+
+  it('does not limit page views', async () => {
+    const res = await fetchPath('/_/deck/', {}, { LOGIN_LIMIT: fakeLimiter(0) });
+    expect(res.status).toBe(401);
+    await res.body?.cancel();
+  });
+
+  it('has no limit without the binding', async () => {
+    const ip = '198.18.0.3';
+    for (let i = 0; i < 12; i++) expect((await login('deck', 'wrong', undefined, ip, { LOGIN_LIMIT: undefined })).status).toBe(401);
+    expect((await login('deck', PASSWORD, undefined, ip, { LOGIN_LIMIT: undefined })).status).toBe(303);
   });
 });
 

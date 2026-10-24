@@ -69,8 +69,15 @@ export function indexPage(artifacts: readonly ArtifactSummary[]): string {
   return layout('share.rlew.io', `<h1>share.rlew.io</h1>\n${list}`);
 }
 
-export function loginPage(action: string, error: boolean): string {
-  const message = error ? '<p class="error">Wrong password.</p>\n' : '';
+export type LoginError = 'wrong' | 'limited';
+
+const LOGIN_ERROR: Record<LoginError, string> = {
+  wrong: 'Wrong password.',
+  limited: 'Too many attempts. Wait a minute and try again.',
+};
+
+export function loginPage(action: string, error?: LoginError): string {
+  const message = error ? `<p class="error">${LOGIN_ERROR[error]}</p>\n` : '';
   return layout(
     'Password required',
     `<h1>Password required</h1>
