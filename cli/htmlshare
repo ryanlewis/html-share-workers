@@ -247,22 +247,22 @@ cmd_upload() {
 	[ -n "$listed" ] && params+=("listed=$listed")
 	[ "$have_title" = 1 ] && params+=("title=$(urlencode "$title")")
 	[ "$newpw" = 1 ] && params+=("regenerate=true")
+	[ "$force" = 1 ] && params+=("overwrite=true")
 	local query="" param
 	for param in ${params[@]+"${params[@]}"}; do query+="${query:+&}$param"; done
 
+	# The server refuses to replace an existing artifact unless overwrite=true is sent.
 	load_token
-	api GET "/artifacts/$scope/$slug"
-	case "$STATUS" in
-		200) [ "$force" = 1 ] || die "$scope slug \"$slug\" already exists: $(json_field url) (use --force to replace it)" ;;
-		404) ;;
-		*) fail_with_body "check failed" ;;
-	esac
-
 	[ "$have_pw" = 1 ] && PASSWORD_HEADER="$password"
 	api PUT "/artifacts/$scope/$slug${query:+?$query}" "${body[@]}"
 	PASSWORD_HEADER=""
 	case "$STATUS" in
 		200 | 201) ;;
+		409)
+			case "$(json_field error)" in
+				*'already exists'*) die "$scope slug \"$slug\" already exists (use --force to replace it)" ;;
+			esac
+			fail_with_body "upload failed" ;;
 		*) fail_with_body "upload failed" ;;
 	esac
 

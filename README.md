@@ -40,6 +40,14 @@ Gated keys sit under the fixed `gated/` prefix rather than mirroring the URL,
 so a public lookup can never reach a gated object, whatever `IP_GATES` says.
 Only gated slugs may have several segments (`pr/some-repo/123`).
 
+While a PUT or DELETE runs, it holds a lock for its slug: an empty object at
+`.locks/<R2 key prefix><slug>` (for example `.locks/gated/acme/pr/x`), created
+with a conditional put so only one request gets it. No slug can start with
+`.`, so the lock is never served or listed. The lock records an expiry five
+minutes ahead; after that another request may take it over, so a crashed
+upload does not block the slug for long. The upload body is read before the
+lock is taken.
+
 ## Serving
 
 `src/serve/index.ts` handles every request outside `/api`.
@@ -241,8 +249,9 @@ htmlshare rm q1-deck [--secured|--gate acme]
 - Each machine has its own token: the Worker secret `TOKEN_<MACHINE>`.
   Removing or blanking that secret revokes that machine only. The machine name
   is stored on each artifact as `uploadedBy`.
-- Before uploading it checks whether the slug exists and stops unless
-  `--force` is given. Replacing an artifact removes all of its old files.
+- The server refuses to replace an existing slug unless `--force` is given
+  (the CLI then sends `overwrite=true`). Replacing an artifact removes all of
+  its old files.
 - A replace keeps the old password, title and listed setting unless you set
   them: `--pw <x>` or `--new-pw` for the password, `--title <t>` (`--title ""`
   clears it), `--listed` or `--unlisted`. A secured replace that kept its
@@ -261,10 +270,10 @@ All routes need `Authorization: Bearer <token>`. Bodies are limited to 25 MB.
 
 | Route | What it does |
 |---|---|
-| `PUT /api/artifacts/<scope>/<slug>` | Upload. Body is `text/html` (one page) or `multipart/form-data` (field name = path, must include `index.html`). Query `listed=true|false`, `title=...` (or headers `X-Share-Listed`, `X-Share-Title`). On a replace, a setting that is not sent keeps its old value; `listed=false` unlists and an empty `title=` clears the title. A new artifact is unlisted with no title. Secured: password in `X-Share-Password`, else generated and returned as `password`. Replacing a secured artifact without `X-Share-Password` keeps its password and returns `passwordUnchanged: true`; send `regenerate=true` (or header `X-Share-Password-Regenerate: 1`) to get a new generated one, which cannot be combined with `X-Share-Password`. `created` is kept and `updated` is set on a replace. 201 when new, 200 when replaced, 409 when a gated slug would nest inside another artifact of the same gate or contain one. |
+| `PUT /api/artifacts/<scope>/<slug>` | Upload. Body is `text/html` (one page) or `multipart/form-data` (field name = path, must include `index.html`). Query `listed=true|false`, `title=...` (or headers `X-Share-Listed`, `X-Share-Title`). On a replace, a setting that is not sent keeps its old value; `listed=false` unlists and an empty `title=` clears the title. A new artifact is unlisted with no title. Secured: password in `X-Share-Password`, else generated and returned as `password`. Replacing a secured artifact without `X-Share-Password` keeps its password and returns `passwordUnchanged: true`; send `regenerate=true` (or header `X-Share-Password-Regenerate: 1`) to get a new generated one, which cannot be combined with `X-Share-Password`. `created` is kept and `updated` is set on a replace. An existing artifact is only replaced when the request sends `overwrite=true` (or header `X-Share-Overwrite: 1`); without it the PUT is a 409 and nothing changes. 201 when new, 200 when replaced, 409 when the artifact exists and `overwrite` is not set, when another PUT or DELETE of the same slug is in progress, or when a gated slug would nest inside another artifact of the same gate or contain one. |
 | `GET /api/artifacts[?visibility=<scope>]` | List artifacts, all or one scope. Lists gated artifacts whose gate is no longer configured, too. |
 | `GET /api/artifacts/<scope>/<slug>` | Metadata, or 404. |
-| `DELETE /api/artifacts/<scope>/<slug>` | Delete every file of the artifact. |
+| `DELETE /api/artifacts/<scope>/<slug>` | Delete every file of the artifact. 409 when another PUT or DELETE of the same slug is in progress. |
 
 `<scope>` is `public`, `secured` or a configured gate name; anything else is a
 400. Responses carry `visibility` (`public`, `secured` or `gated`) and, for
@@ -272,5 +281,8 @@ gated artifacts, `gate`. Uploading a public slug equal to a configured gate name
 DELETE still work on one, so a shadowed artifact can be removed.
 
 Errors are JSON: `{"error": "..."}`.
+
+Breaking change: before `overwrite`, a PUT to an existing slug replaced it.
+Clients that replace artifacts must now send `overwrite=true`.
 
 `cli/test.sh` runs the CLI against `wrangler dev --local` with a dummy token.

@@ -4,7 +4,10 @@ import { MAX_BODY_BYTES } from '../../src/api';
 import type { Env } from '../../src/env';
 import app from '../../src/index';
 import {
+  acquireSlugLock,
   gatedScope,
+  LOCK_TTL_MS,
+  lockKey,
   objectKey,
   PUBLIC,
   putArtifactIndex,
@@ -213,8 +216,8 @@ describe('PUT', () => {
 
   it('rejects a bad listed value and an over-long title without touching the old artifact', async () => {
     await putHtml('/artifacts/public/keep');
-    expect((await putHtml('/artifacts/public/keep?listed=maybe')).status).toBe(400);
-    const long = await putHtml(`/artifacts/public/keep?title=${'t'.repeat(201)}`);
+    expect((await putHtml('/artifacts/public/keep?overwrite=true&listed=maybe')).status).toBe(400);
+    const long = await putHtml(`/artifacts/public/keep?overwrite=true&title=${'t'.repeat(201)}`);
     expect(long.status).toBe(400);
     expect(await keys()).toEqual(['keep/index.html']);
   });
@@ -280,7 +283,7 @@ describe('replace', () => {
   it('removes stale objects and keeps the created time', async () => {
     const first = await putForm('/artifacts/public/site', { 'index.html': HTML, 'old.js': 'x', 'sub/a.css': 'y' });
     const { created } = await first.json<{ created: string }>();
-    const second = await putForm('/artifacts/public/site', { 'index.html': '<p>v2</p>', 'new.js': 'z' });
+    const second = await putForm('/artifacts/public/site?overwrite=true', { 'index.html': '<p>v2</p>', 'new.js': 'z' });
     expect(second.status).toBe(200);
     const body = await second.json<{ created: string; updated: string }>();
     expect(body.created).toBe(created);
@@ -291,7 +294,7 @@ describe('replace', () => {
   it('does not touch an artifact whose slug shares a text prefix', async () => {
     await putHtml('/artifacts/public/site-two');
     await putHtml('/artifacts/public/site');
-    await putHtml('/artifacts/public/site');
+    await putHtml('/artifacts/public/site?overwrite=true');
     expect(await keys()).toEqual(['site-two/index.html', 'site/index.html']);
   });
 
@@ -308,11 +311,146 @@ describe('replace', () => {
     expect((await putHtml('/artifacts/acme/team/a')).status).toBe(409);
     // Replacing the same slug is fine, and other scopes, including other
     // gates, do not nest.
-    expect((await putHtml('/artifacts/acme/pr')).status).toBe(200);
+    expect((await putHtml('/artifacts/acme/pr?overwrite=true')).status).toBe(200);
     expect((await putHtml('/artifacts/public/team')).status).toBe(201);
     expect((await putHtml('/artifacts/example/pr/x')).status).toBe(201);
     expect((await putHtml('/artifacts/example/team')).status).toBe(201);
     expect(await keys('gated/acme/')).toEqual(['gated/acme/pr/index.html', 'gated/acme/team/a/b/index.html']);
+  });
+});
+
+describe('overwrite', () => {
+  it('refuses to replace an existing artifact without overwrite, and changes nothing', async () => {
+    await putForm('/artifacts/public/site?title=Old', { 'index.html': '<p>v1</p>', 'old.js': 'x' });
+    const before = await readArtifactMeta(env.BUCKET, PUBLIC, 'site');
+    for (const query of ['', '?overwrite=false', '?overwrite=0']) {
+      const res = await putForm(`/artifacts/public/site${query}`, { 'index.html': '<p>v2</p>', 'new.js': 'z' });
+      expect(res.status, query).toBe(409);
+      expect(await res.json()).toEqual({ error: '"site" already exists (set overwrite=true to replace it)' });
+    }
+    const header = await putHtml('/artifacts/public/site', '<p>v2</p>', { 'X-Share-Overwrite': 'false' });
+    expect(header.status).toBe(409);
+    expect(await keys()).toEqual(['site/index.html', 'site/old.js']);
+    expect(await (await env.BUCKET.get('site/index.html'))?.text()).toBe('<p>v1</p>');
+    expect(await readArtifactMeta(env.BUCKET, PUBLIC, 'site')).toEqual(before);
+  });
+
+  it('replaces with overwrite from the query or the header', async () => {
+    await putHtml('/artifacts/public/p', '<p>v1</p>');
+    expect((await putHtml('/artifacts/public/p?overwrite=true', '<p>v2</p>')).status).toBe(200);
+    expect(await (await env.BUCKET.get('p/index.html'))?.text()).toBe('<p>v2</p>');
+    expect((await putHtml('/artifacts/public/p', '<p>v3</p>', { 'X-Share-Overwrite': '1' })).status).toBe(200);
+    expect(await (await env.BUCKET.get('p/index.html'))?.text()).toBe('<p>v3</p>');
+  });
+
+  it('creates a new artifact whether or not overwrite is set, and rejects a bad value', async () => {
+    expect((await putHtml('/artifacts/public/a?overwrite=true')).status).toBe(201);
+    expect((await putHtml('/artifacts/public/b?overwrite=false')).status).toBe(201);
+    expect((await putHtml('/artifacts/public/c?overwrite=maybe')).status).toBe(400);
+    expect(await keys()).toEqual(['a/index.html', 'b/index.html']);
+  });
+});
+
+describe('slug lock', () => {
+  it('refuses a PUT or DELETE while another request holds the lock, and writes nothing', async () => {
+    await putForm('/artifacts/public/site', { 'index.html': '<p>v1</p>', 'old.js': 'x' });
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
+    const put = await putForm('/artifacts/public/site?overwrite=true', { 'index.html': '<p>v2</p>', 'new.js': 'z' });
+    expect(put.status).toBe(409);
+    expect(await put.json()).toEqual({ error: 'another upload or delete of "site" is in progress' });
+    expect((await putHtml('/artifacts/public/site?overwrite=true')).status).toBe(409);
+    expect((await call('/artifacts/public/site', { method: 'DELETE' })).status).toBe(409);
+    expect(await keys('site/')).toEqual(['site/index.html', 'site/old.js']);
+    expect(await (await env.BUCKET.get('site/index.html'))?.text()).toBe('<p>v1</p>');
+    // A new slug is refused too, and leaves nothing behind.
+    expect(await acquireSlugLock(env.BUCKET, ACME, 'pr/new')).not.toBeNull();
+    expect((await putHtml('/artifacts/acme/pr/new')).status).toBe(409);
+    expect(await keys('gated/')).toEqual([]);
+  });
+
+  it('locks each slug in each scope on its own', async () => {
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).toBeNull();
+    expect((await putHtml('/artifacts/public/site-two')).status).toBe(201);
+    expect((await putHtml('/artifacts/secured/site')).status).toBe(201);
+    expect((await putHtml('/artifacts/acme/site')).status).toBe(201);
+  });
+
+  it('takes over a lock that has expired', async () => {
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site', Date.now() - LOCK_TTL_MS - 1)).not.toBeNull();
+    expect((await putHtml('/artifacts/public/site')).status).toBe(201);
+  });
+
+  it('releases the lock after a success and after a refusal', async () => {
+    await putHtml('/artifacts/public/site');
+    expect((await putHtml('/artifacts/public/site')).status).toBe(409);
+    expect((await call('/artifacts/public/site', { method: 'DELETE' })).status).toBe(200);
+    expect((await call('/artifacts/public/site', { method: 'DELETE' })).status).toBe(404);
+    expect(await keys('.locks/')).toEqual([]);
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
+  });
+
+  it('does not show the lock as an artifact or a page', async () => {
+    expect(await acquireSlugLock(env.BUCKET, ACME, 'pr/x')).not.toBeNull();
+    expect(lockKey(ACME, 'pr/x')).toBe('.locks/gated/acme/pr/x');
+    expect(await (await call('/artifacts')).json()).toEqual({ artifacts: [] });
+    const page = await exports.default.fetch('https://share.test/.locks/gated/acme/pr/x');
+    await page.body?.cancel();
+    expect(page.status).toBe(404);
+  });
+
+  it('lets only one of two overlapping uploads write, so files never mix', async () => {
+    await putForm('/artifacts/public/site', { 'index.html': '<p>v0</p>', 'old.js': 'x' });
+    // Upload A stops at its first asset write until B has finished.
+    let resume!: () => void;
+    const held = new Promise<void>((r) => (resume = r));
+    let reached!: () => void;
+    const atFirstWrite = new Promise<void>((r) => (reached = r));
+    const real = env.BUCKET;
+    const pausing = new Proxy(real, {
+      get(target, prop) {
+        if (prop === 'put') {
+          return async (key: string, ...rest: unknown[]) => {
+            if (key === 'site/a.js') {
+              reached();
+              await held;
+            }
+            return (target.put as (...args: unknown[]) => unknown).call(target, key, ...rest);
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    function form(files: Record<string, string>) {
+      const body = new FormData();
+      for (const [name, content] of Object.entries(files)) body.append(name, new File([content], name));
+      return new Request(`${BASE}/artifacts/public/site?overwrite=true`, {
+        method: 'PUT',
+        body,
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      });
+    }
+    const a = Promise.resolve(app.fetch(form({ 'index.html': '<p>A</p>', 'a.js': 'a' }), { ...env, BUCKET: pausing } as Env));
+    await atFirstWrite;
+    const b = await app.fetch(form({ 'index.html': '<p>B</p>', 'b.js': 'b' }), env as Env);
+    expect(b.status).toBe(409);
+    resume();
+    expect((await a).status).toBe(200);
+    expect(await keys('site/')).toEqual(['site/a.js', 'site/index.html']);
+    expect(await (await env.BUCKET.get('site/index.html'))?.text()).toBe('<p>A</p>');
+  });
+
+  it('ends with exactly one upload\'s files when PUTs run at once', async () => {
+    await putHtml('/artifacts/public/site');
+    const uploads = ['a', 'b', 'c'].map((n) => ({ 'index.html': `<p>${n}</p>`, [`${n}.js`]: n, [`${n}/x.css`]: n }));
+    const results = await Promise.all(uploads.map((files) => putForm('/artifacts/public/site?overwrite=true', files)));
+    const statuses = results.map((r) => r.status);
+    expect(statuses.every((s) => s === 200 || s === 409)).toBe(true);
+    expect(statuses).toContain(200);
+    const page = await (await env.BUCKET.get('site/index.html'))!.text();
+    const winner = uploads.find((files) => files['index.html'] === page)!;
+    expect(await keys('site/')).toEqual(Object.keys(winner).map((k) => `site/${k}`).sort());
   });
 });
 
@@ -359,7 +497,7 @@ describe('secured', () => {
     const cookie = await loginCookie('s', first.password);
     expect(await securedStatus('s', cookie)).toBe(200);
 
-    const res = await putHtml('/artifacts/secured/s', '<p>v2</p>');
+    const res = await putHtml('/artifacts/secured/s?overwrite=true', '<p>v2</p>');
     expect(res.status).toBe(200);
     const body = await res.json<Record<string, unknown>>();
     expect(body).not.toHaveProperty('password');
@@ -374,7 +512,7 @@ describe('secured', () => {
   it('replaces the password when one is given, and old cookies stop working', async () => {
     const first = await (await putHtml('/artifacts/secured/s')).json<{ password: string }>();
     const cookie = await loginCookie('s', first.password);
-    const res = await putHtml('/artifacts/secured/s', HTML, { 'X-Share-Password': 'new-one' });
+    const res = await putHtml('/artifacts/secured/s?overwrite=true', HTML, { 'X-Share-Password': 'new-one' });
     const body = await res.json<Record<string, unknown>>();
     expect(body).not.toHaveProperty('password');
     expect(body).not.toHaveProperty('passwordUnchanged');
@@ -385,8 +523,8 @@ describe('secured', () => {
   });
 
   it.each([
-    ['query', '?regenerate=true', {}],
-    ['header', '', { 'X-Share-Password-Regenerate': '1' }],
+    ['query', '?overwrite=true&regenerate=true', {}],
+    ['header', '', { 'X-Share-Overwrite': 'true', 'X-Share-Password-Regenerate': '1' }],
   ])('generates a new password on request (%s), and old cookies stop working', async (_name, query, headers) => {
     const first = await (await putHtml('/artifacts/secured/s')).json<{ password: string }>();
     const cookie = await loginCookie('s', first.password);
@@ -419,32 +557,32 @@ describe('secured', () => {
 describe('replace keeps title and listed', () => {
   it('keeps both when the request sets neither', async () => {
     await putHtml('/artifacts/public/p?listed=true&title=Keep%20me');
-    const res = await putHtml('/artifacts/public/p');
+    const res = await putHtml('/artifacts/public/p?overwrite=true');
     expect(await res.json()).toMatchObject({ listed: true, title: 'Keep me' });
     expect(await readArtifactMeta(env.BUCKET, PUBLIC, 'p')).toMatchObject({ listed: true, title: 'Keep me' });
   });
 
   it('uses new values when set', async () => {
     await putHtml('/artifacts/public/p?listed=true&title=Old');
-    await putHtml('/artifacts/public/p', HTML, { 'X-Share-Title': 'New' });
+    await putHtml('/artifacts/public/p?overwrite=true', HTML, { 'X-Share-Title': 'New' });
     expect(await readArtifactMeta(env.BUCKET, PUBLIC, 'p')).toMatchObject({ listed: true, title: 'New' });
     await putHtml('/artifacts/public/q');
-    await putHtml('/artifacts/public/q?listed=true');
+    await putHtml('/artifacts/public/q?overwrite=true&listed=true');
     expect(await readArtifactMeta(env.BUCKET, PUBLIC, 'q')).toMatchObject({ listed: true });
   });
 
   it('unlists with listed=false and clears the title with an empty one', async () => {
     await putHtml('/artifacts/public/p?listed=true&title=Old');
-    await putHtml('/artifacts/public/p?listed=false');
+    await putHtml('/artifacts/public/p?overwrite=true&listed=false');
     expect(await readArtifactMeta(env.BUCKET, PUBLIC, 'p')).toMatchObject({ listed: false, title: 'Old' });
-    const res = await putHtml('/artifacts/public/p?title=');
+    const res = await putHtml('/artifacts/public/p?overwrite=true&title=');
     expect(res.status).toBe(200);
     const meta = await readArtifactMeta(env.BUCKET, PUBLIC, 'p');
     expect(meta?.title).toBeUndefined();
     expect(await res.json()).not.toHaveProperty('title');
-    const byHeader = await putHtml('/artifacts/public/p?title=Again');
+    const byHeader = await putHtml('/artifacts/public/p?overwrite=true&title=Again');
     expect(await byHeader.json()).toMatchObject({ title: 'Again' });
-    await putHtml('/artifacts/public/p', HTML, { 'X-Share-Title': '' });
+    await putHtml('/artifacts/public/p', HTML, { 'X-Share-Overwrite': '1', 'X-Share-Title': '' });
     expect((await readArtifactMeta(env.BUCKET, PUBLIC, 'p'))?.title).toBeUndefined();
   });
 
@@ -459,7 +597,7 @@ describe('replace keeps title and listed', () => {
     for (const path of ['/artifacts/public/c', '/artifacts/secured/c', '/artifacts/acme/c']) {
       const first = await (await putHtml(path)).json<{ created: string; updated: string }>();
       await new Promise((r) => setTimeout(r, 5));
-      const second = await (await putHtml(path)).json<{ created: string; updated: string }>();
+      const second = await (await putHtml(`${path}?overwrite=true`)).json<{ created: string; updated: string }>();
       expect(second.created).toBe(first.created);
       expect(Date.parse(second.updated)).toBeGreaterThan(Date.parse(first.updated));
     }
