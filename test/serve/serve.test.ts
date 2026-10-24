@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../src/env';
 import app from '../../src/index';
 import { type ArtifactMeta, putArtifactIndex, type Visibility } from '../../src/lib/artifacts';
@@ -269,6 +269,28 @@ describe('exact-path redirects', () => {
   it('skips an entry that points at itself', async () => {
     const res = await fetchPath('/acme/', { headers }, { REDIRECTS: '{"/acme/":"/acme"}' });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('config parsing', () => {
+  it('parses each config value once per isolate and logs a bad one once', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // Values no other test uses, so nothing has cached them yet.
+      const overrides = { IP_GATES: '{"acme":["once"]}', REDIRECTS: '{"/once//":"/x/"}' };
+      for (let i = 0; i < 3; i++) await fetchPath('/deck/', {}, overrides);
+      const messages = log.mock.calls.map((call) => String(call[0]));
+      expect(messages.filter((m) => m.startsWith('IP_GATES'))).toHaveLength(1);
+      expect(messages.filter((m) => m.startsWith('REDIRECTS'))).toHaveLength(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('serves a cross-host self-target as the page, not a redirect loop', async () => {
+    await putArtifactIndex(env.BUCKET, 'deck', '<p>deck</p>', meta('public'));
+    const redirects = { REDIRECTS: '{"/deck/":"https://share.test/deck/","deck":"https://share.test/deck/"}' };
+    expect((await fetchPath('/deck/', { redirect: 'manual' }, redirects)).status).toBe(200);
   });
 });
 

@@ -19,7 +19,7 @@ import {
   validateMeta,
   validateSlug,
 } from '../lib/artifacts';
-import { parseGates } from '../lib/gates';
+import { gatesFor } from '../lib/gates';
 import { hashPassword } from '../lib/password';
 import { bearerAuth, type ApiEnv } from './auth';
 import { parseMultipart, type ParsedUpload } from './files';
@@ -89,7 +89,7 @@ function resolveScope(name: string, gates: ReadonlySet<string>): Scope {
  * shadowed by a gate added later can be removed.
  */
 function target(c: Context<ApiEnv>, upload = false): { scope: Scope; slug: string } {
-  const gates = parseGates(c.env.IP_GATES).names;
+  const gates = gatesFor(c.env.IP_GATES).names;
   const scope = resolveScope(c.req.param('scope') ?? '', gates);
   const slug = c.req.param('slug') ?? '';
   const check = validateSlug(scope, slug);
@@ -197,7 +197,7 @@ api.onError((err, c) => {
 
 api.get('/artifacts', async (c) => {
   const filter = c.req.query('visibility');
-  const scope = filter === undefined ? undefined : resolveScope(filter, parseGates(c.env.IP_GATES).names);
+  const scope = filter === undefined ? undefined : resolveScope(filter, gatesFor(c.env.IP_GATES).names);
   const found = await listArtifacts(c.env.BUCKET, scope);
   return c.json({
     artifacts: found.map((a) => ({ ...describe(a.scope, a.slug, a.meta), size: a.size })),

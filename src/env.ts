@@ -10,12 +10,15 @@ export interface Env {
   COOKIE_SECRET: string;
   /**
    * Secret. JSON object of gate name -> IPv4/IPv6 CIDRs allowed to read /<gate>/,
-   * e.g. {"acme":["192.0.2.0/24","2001:db8::/32"]}. Read it with parseGates().
+   * e.g. {"acme":["192.0.2.0/24","2001:db8::/32"]}. Read it with gatesFor().
    */
   IP_GATES?: string;
   /** Secret. HTML injected before </head> on HTML responses. Empty or unset means none. */
   ANALYTICS_SNIPPET?: string;
-  /** Secret. JSON object of slug -> target path, e.g. {"some-slug":"/acme/some-slug/"}. Unset means none. */
+  /**
+   * Secret. JSON object of slug or exact path -> target, e.g. {"some-slug":"/acme/some-slug/"}.
+   * Unset means none. Read it with redirectsFor().
+   */
   REDIRECTS?: string;
   /**
    * Upload bearer tokens, one secret per machine: TOKEN_M5P, TOKEN_WORKLAPTOP, ...
