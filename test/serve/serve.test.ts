@@ -204,6 +204,11 @@ describe('redirects', () => {
     expect(res.status).toBe(403);
   });
 
+  it('serves normally when REDIRECTS is unset', async () => {
+    await putArtifactIndex(env.BUCKET, 'deck', '<p>deck</p>', meta('public'));
+    expect((await fetchPath('/deck/', {}, { REDIRECTS: undefined })).status).toBe(200);
+  });
+
   it('ignores invalid JSON and non-string targets', async () => {
     await putArtifactIndex(env.BUCKET, 'deck', '<p>deck</p>', meta('public'));
     expect((await fetchPath('/deck/', {}, { REDIRECTS: 'not json' })).status).toBe(200);

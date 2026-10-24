@@ -9,7 +9,6 @@ describe('machineTokens', () => {
       TOKEN_WORKLAPTOP: 'b',
       TOKEN_REVOKED: '',
       TOKEN_: 'no-machine',
-      REDIRECTS: '{}',
     } as unknown as Env;
     expect(Object.fromEntries(machineTokens(env))).toEqual({ m5p: 'a', worklaptop: 'b' });
   });

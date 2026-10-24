@@ -1,0 +1,6 @@
+# Copy to .dev.vars for `wrangler dev --local`. Placeholder values only.
+COOKIE_SECRET=local-dev-only
+TOKEN_M5P=local-dev-token
+IP_GATES={"example":["192.0.2.0/24","2001:db8::/32"]}
+REDIRECTS={}
+ANALYTICS_SNIPPET=
