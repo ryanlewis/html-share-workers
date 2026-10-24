@@ -11,7 +11,7 @@ import {
   SECURED,
   validateSlug,
 } from '../lib/artifacts';
-import { ipAllowed } from '../lib/cidr';
+import { clientNetwork, ipAllowed } from '../lib/cidr';
 import { type Gates, gatesFor } from '../lib/gates';
 import { verifyPassword } from '../lib/password';
 import { pointsAt, type Redirects, redirectLocation, redirectsFor, trimSlashes } from '../lib/redirects';
@@ -318,15 +318,16 @@ async function serveSecured(c: Ctx, segments: string[], trailingSlash: boolean):
 }
 
 /**
- * Counts a password attempt against the client IP, across all secured
- * slugs, so spreading guesses over pages gains nothing. Runs before the
- * artifact lookup and the PBKDF2 check. Without the binding there is no limit.
+ * Counts a password attempt against the client IP (an IPv6 client's /64),
+ * across all secured slugs, so spreading guesses over pages gains nothing.
+ * Runs before the artifact lookup and the PBKDF2 check. Without the binding
+ * there is no limit.
  */
 async function loginAllowed(c: Ctx): Promise<boolean> {
   const limiter = c.env.LOGIN_LIMIT;
   if (!limiter) return true;
-  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
-  return (await limiter.limit({ key: ip })).success;
+  const key = clientNetwork(c.req.header('CF-Connecting-IP') ?? '') ?? 'unknown';
+  return (await limiter.limit({ key })).success;
 }
 
 async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean): Promise<Response> {

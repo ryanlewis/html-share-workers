@@ -135,6 +135,21 @@ export function parseAllowlist(text: string | undefined): Cidr[] {
     .filter((cidr): cidr is Cidr => cidr !== null);
 }
 
+/**
+ * The network a client is counted as for rate limiting: an IPv4 address as
+ * itself, an IPv6 address as its /64, because one IPv6 client usually holds
+ * a whole /64 and could otherwise rotate addresses. Null when malformed.
+ */
+export function clientNetwork(ip: string): string | null {
+  const address = parseAddress(ip);
+  if (!address) return null;
+  if (address.family === 4) {
+    return [24n, 16n, 8n, 0n].map((shift) => (address.value >> shift) & 0xffn).join('.');
+  }
+  const hextets = [112n, 96n, 80n, 64n].map((shift) => ((address.value >> shift) & 0xffffn).toString(16));
+  return `${hextets.join(':')}::/64`;
+}
+
 /** True if the address is inside any of the ranges. A malformed address gives false. */
 export function ipAllowed(ip: string, allowlist: readonly Cidr[]): boolean {
   const address = parseAddress(ip);

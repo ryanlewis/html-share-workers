@@ -612,6 +612,14 @@ describe('login rate limit', () => {
     expect(limiter.keys).toEqual(['192.0.2.7', '192.0.2.7']);
   });
 
+  it('counts an IPv6 client by its /64, so it cannot rotate addresses', async () => {
+    const limiter = fakeLimiter(Infinity);
+    for (const ip of ['2001:db8:1:2::1', '2001:DB8:1:2:ffff:ffff:ffff:fffe', '2001:db8:1:3::1', '::ffff:192.0.2.9']) {
+      expect((await login('deck', 'wrong', undefined, ip, { LOGIN_LIMIT: limiter })).status).toBe(401);
+    }
+    expect(limiter.keys).toEqual(['2001:db8:1:2::/64', '2001:db8:1:2::/64', '2001:db8:1:3::/64', '192.0.2.9']);
+  });
+
   it('answers 429 for unknown slugs too, so the limit also covers probing', async () => {
     await expectLimited(await login('nope', PASSWORD, undefined, '192.0.2.8', { LOGIN_LIMIT: fakeLimiter(0) }));
   });
