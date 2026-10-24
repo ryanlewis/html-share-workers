@@ -1,0 +1,16 @@
+# share.rlew.io Worker. No account id or route here: both are set at deploy time.
+name = "html-share"
+main = "src/index.ts"
+compatibility_date = "2026-08-01"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "html-share"
+
+# Placeholder values only. Real values are set at deploy time; secrets
+# (COOKIE_SECRET, TOKEN_<MACHINE>) go in with `wrangler secret put`, or in
+# .dev.vars for local runs. See src/env.ts for what each one means.
+[vars]
+IP_GATES = '{"example":["192.0.2.0/24","2001:db8::/32"]}'
+ANALYTICS_SNIPPET = ""
+REDIRECTS = "{}"
