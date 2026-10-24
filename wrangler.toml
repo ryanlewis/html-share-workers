@@ -1,7 +1,12 @@
-# share.rlew.io Worker. No account id or route here: both are set at deploy time.
+# share.rlew.io Worker. The account comes from the wrangler login at deploy time.
 name = "html-share"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
+
+# Served on a Workers custom domain: Cloudflare creates the DNS record and the
+# certificate. The workers.dev URL stays on for testing.
+routes = [{ pattern = "share.rlew.io", custom_domain = true }]
+workers_dev = true
 
 [[r2_buckets]]
 binding = "BUCKET"
