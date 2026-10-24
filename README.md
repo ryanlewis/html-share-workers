@@ -60,7 +60,8 @@ top-level slug: `/<slug>/...` redirects with its sub-path kept. A key starting
 with `/` is an exact path, which can have several segments and can be a gate
 root, matched against the decoded path. A trailing slash on the key or the
 request does not matter. An entry whose target is its own path is dropped
-(see Configuration), and so is a full URL to this host at the same path. A request query is added to the target's own query. Exact-path
+when parsed (see Configuration). A full URL to the serving host at the same
+path cannot be caught then, so it is skipped on each request instead. A request query is added to the target's own query. Exact-path
 redirects run before the IP check, so anyone can see where a gate root points;
 they reveal a path, not content, and the target is still gated. For example, to send `/lhv/` to the
 listing at `/lhv/index/`:
