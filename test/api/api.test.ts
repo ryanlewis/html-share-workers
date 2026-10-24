@@ -441,9 +441,9 @@ describe('slug lock', () => {
 
   it('does not show the lock as an artifact or a page', async () => {
     expect(await acquireSlugLock(env.BUCKET, ACME, 'pr/x')).not.toBeNull();
-    expect(lockKey(ACME, 'pr/x')).toBe('.locks/gated/acme/pr/x');
+    expect(lockKey(ACME, 'pr/x')).toBe('.locks/gated/acme');
     expect(await (await call('/artifacts')).json()).toEqual({ artifacts: [] });
-    const page = await exports.default.fetch('https://share.test/.locks/gated/acme/pr/x');
+    const page = await exports.default.fetch('https://share.test/.locks/gated/acme');
     await page.body?.cancel();
     expect(page.status).toBe(404);
   });
@@ -500,6 +500,84 @@ describe('slug lock', () => {
     const page = await (await env.BUCKET.get('site/index.html'))!.text();
     const winner = uploads.find((files) => files['index.html'] === page)!;
     expect(await keys('site/')).toEqual(Object.keys(winner).map((k) => `site/${k}`).sort());
+  });
+
+  it('does not let a gated child upload while its parent uploads, so they never nest', async () => {
+    // The parent stops at its first asset write until the child has tried.
+    let resume!: () => void;
+    const held = new Promise<void>((r) => (resume = r));
+    let reached!: () => void;
+    const atFirstWrite = new Promise<void>((r) => (reached = r));
+    const pausing = new Proxy(env.BUCKET, {
+      get(target, prop) {
+        if (prop === 'put') {
+          return async (key: string, ...rest: unknown[]) => {
+            if (key === 'gated/acme/pr/a.js') {
+              reached();
+              await held;
+            }
+            return (target.put as (...args: unknown[]) => unknown).call(target, key, ...rest);
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const body = new FormData();
+    body.append('index.html', new File(['<p>parent</p>'], 'index.html'));
+    body.append('a.js', new File(['a'], 'a.js'));
+    const request = new Request(`${BASE}/artifacts/acme/pr`, { method: 'PUT', body, headers: { Authorization: `Bearer ${TOKEN}` } });
+    const parent = Promise.resolve(app.fetch(request, { ...env, BUCKET: pausing } as Env));
+    await atFirstWrite;
+    const child = await putHtml('/artifacts/acme/pr/x');
+    expect(child.status).toBe(409);
+    expect(await child.json()).toEqual({ error: 'another upload or delete in gate "acme" is in progress (a stale lock expires within 5 minutes)' });
+    resume();
+    expect((await parent).status).toBe(201);
+    expect(await keys('gated/')).toEqual(['gated/acme/pr/a.js', 'gated/acme/pr/index.html']);
+  });
+
+  it('does not let a gated parent upload while a child is being deleted, so the delete never removes its files', async () => {
+    await putForm('/artifacts/acme/pr/x', { 'index.html': '<p>child</p>', 'z.js': 'child' });
+    // R2 batch deletes are not atomic: this one stops after the child's
+    // index.html is gone until the parent has tried.
+    let resume!: () => void;
+    const held = new Promise<void>((r) => (resume = r));
+    let reached!: () => void;
+    const midDelete = new Promise<void>((r) => (reached = r));
+    const pausing = new Proxy(env.BUCKET, {
+      get(target, prop) {
+        if (prop === 'delete') {
+          return async (batch: string | string[]) => {
+            for (const key of [batch].flat()) {
+              await target.delete(key);
+              if (key === 'gated/acme/pr/x/index.html') {
+                reached();
+                await held;
+              }
+            }
+          };
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const request = new Request(`${BASE}/artifacts/acme/pr/x`, { method: 'DELETE', headers: { Authorization: `Bearer ${TOKEN}` } });
+    const deleting = Promise.resolve(app.fetch(request, { ...env, BUCKET: pausing } as Env));
+    await midDelete;
+    const parent = await putForm('/artifacts/acme/pr', { 'index.html': '<p>parent</p>', 'x/z.js': 'parent' });
+    expect(parent.status).toBe(409);
+    resume();
+    expect((await deleting).status).toBe(200);
+    expect(await keys('gated/')).toEqual([]);
+  });
+
+  it('locks a whole gate, and only that gate', async () => {
+    expect(await acquireSlugLock(env.BUCKET, ACME, 'pr/x')).not.toBeNull();
+    expect(await acquireSlugLock(env.BUCKET, ACME, 'other')).toBeNull();
+    expect((await putHtml('/artifacts/acme/pr')).status).toBe(409);
+    expect((await putHtml('/artifacts/example/pr')).status).toBe(201);
+    expect((await putHtml('/artifacts/public/pr')).status).toBe(201);
   });
 });
 

@@ -356,9 +356,13 @@ export async function listArtifacts(bucket: R2Bucket, scope?: Scope, slugPrefix 
 }
 
 /**
- * Per-slug upload lock. A PUT or DELETE holds it from the first read of an
+ * Upload lock. A PUT or DELETE holds it from the first read of an
  * artifact's keys to its last write, so two requests to one slug cannot mix
- * their files, and the overwrite check is made under it. It is an R2 object
+ * their files, and the overwrite check is made under it. Public and secured
+ * slugs each have their own lock. A gated scope has one lock for the whole
+ * gate: gated slugs nest by key prefix (pr and pr/x), and a parent's key scan
+ * and stale-key delete cover a child's keys, so a parent and a child must not
+ * run at once. It is an R2 object
  * under ".locks/", which no valid slug can reach, created with a conditional
  * put so only one request wins. It records an expiry, after which another
  * request may take it over, so a crashed upload does not wedge the slug.
@@ -372,7 +376,10 @@ const LOCK_PREFIX = '.locks/';
 export const LOCK_TTL_MS = 5 * 60 * 1000;
 
 export function lockKey(scope: Scope, slug: string): string {
-  return `${LOCK_PREFIX}${artifactPrefix(scope, slug).slice(0, -1)}`;
+  // Called for every scope so a bad slug is refused, gated or not.
+  const prefix = artifactPrefix(scope, slug);
+  const locked = scope.visibility === 'gated' ? scopeKeyPrefix(scope) : prefix;
+  return `${LOCK_PREFIX}${locked.slice(0, -1)}`;
 }
 
 /** A held lock: the key and the etag of the lock object this request wrote. */
