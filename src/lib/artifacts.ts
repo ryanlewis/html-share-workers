@@ -385,8 +385,11 @@ export interface SlugLock {
 export async function acquireSlugLock(bucket: R2Bucket, scope: Scope, slug: string, now = Date.now()): Promise<SlugLock | null> {
   const key = lockKey(scope, slug);
   const options = { customMetadata: { expires: String(now + LOCK_TTL_MS) } };
+  // A random body gives each lock its own etag (R2's etag is the body's MD5),
+  // which the takeover and the release below depend on.
+  const body = crypto.randomUUID();
   // R2's put returns null when the onlyIf condition fails.
-  let lock = await bucket.put(key, '', { ...options, onlyIf: new Headers({ 'If-None-Match': '*' }) });
+  let lock = await bucket.put(key, body, { ...options, onlyIf: new Headers({ 'If-None-Match': '*' }) });
   if (!lock) {
     const held = await bucket.head(key);
     // Released between the put and the head: report it as busy rather than loop.
@@ -394,7 +397,7 @@ export async function acquireSlugLock(bucket: R2Bucket, scope: Scope, slug: stri
     const expires = Number(held.customMetadata?.expires);
     if (Number.isFinite(expires) && expires > now) return null;
     // Expired: take it over, but only if nobody else did first.
-    lock = await bucket.put(key, '', { ...options, onlyIf: { etagMatches: held.etag } });
+    lock = await bucket.put(key, body, { ...options, onlyIf: { etagMatches: held.etag } });
     if (!lock) return null;
   }
   return { key, etag: lock.etag };

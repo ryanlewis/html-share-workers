@@ -12,6 +12,7 @@ import {
   PUBLIC,
   putArtifactIndex,
   readArtifactMeta,
+  releaseSlugLock,
   type Scope,
   SECURED,
 } from '../../src/lib/artifacts';
@@ -357,7 +358,7 @@ describe('slug lock', () => {
     expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
     const put = await putForm('/artifacts/public/site?overwrite=true', { 'index.html': '<p>v2</p>', 'new.js': 'z' });
     expect(put.status).toBe(409);
-    expect(await put.json()).toEqual({ error: 'another upload or delete of "site" is in progress' });
+    expect(await put.json()).toEqual({ error: 'another upload or delete of "site" is in progress (a stale lock expires within 5 minutes)' });
     expect((await putHtml('/artifacts/public/site?overwrite=true')).status).toBe(409);
     expect((await call('/artifacts/public/site', { method: 'DELETE' })).status).toBe(409);
     expect(await keys('site/')).toEqual(['site/index.html', 'site/old.js']);
@@ -379,6 +380,20 @@ describe('slug lock', () => {
   it('takes over a lock that has expired', async () => {
     expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site', Date.now() - LOCK_TTL_MS - 1)).not.toBeNull();
     expect((await putHtml('/artifacts/public/site')).status).toBe(201);
+  });
+
+  it('lets only one of two requests take over an expired lock', async () => {
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site', Date.now() - LOCK_TTL_MS - 1)).not.toBeNull();
+    const taken = await Promise.all([acquireSlugLock(env.BUCKET, PUBLIC, 'site'), acquireSlugLock(env.BUCKET, PUBLIC, 'site')]);
+    expect(taken.filter((lock) => lock !== null)).toHaveLength(1);
+  });
+
+  it('does not release a lock that another request has taken over', async () => {
+    const stale = await acquireSlugLock(env.BUCKET, PUBLIC, 'site', Date.now() - LOCK_TTL_MS - 1);
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).not.toBeNull();
+    await releaseSlugLock(env.BUCKET, stale!);
+    expect(await keys('.locks/')).toEqual(['.locks/site']);
+    expect(await acquireSlugLock(env.BUCKET, PUBLIC, 'site')).toBeNull();
   });
 
   it('releases the lock after a success and after a refusal', async () => {

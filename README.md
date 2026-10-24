@@ -40,7 +40,7 @@ Gated keys sit under the fixed `gated/` prefix rather than mirroring the URL,
 so a public lookup can never reach a gated object, whatever `IP_GATES` says.
 Only gated slugs may have several segments (`pr/some-repo/123`).
 
-While a PUT or DELETE runs, it holds a lock for its slug: an empty object at
+While a PUT or DELETE runs, it holds a lock for its slug: a small object at
 `.locks/<R2 key prefix><slug>` (for example `.locks/gated/acme/pr/x`), created
 with a conditional put so only one request gets it. No slug can start with
 `.`, so the lock is never served or listed. The lock records an expiry five
