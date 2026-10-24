@@ -60,7 +60,7 @@ export function redirectLocation(target: string, subPath: string | null, search:
 
 /**
  * True for "/path" or a URL with a scheme, such as "https://host/path". Not
- * "//host" or "/\\host", which browsers read as a link to another host.
+ * "//host" or "/\host", which browsers read as a link to another host.
  */
 function isAbsoluteTarget(target: string): boolean {
   if (target.startsWith('/')) return !/^\/[/\\]/.test(target);
