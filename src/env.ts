@@ -8,7 +8,7 @@ export interface Env {
   BUCKET: R2Bucket;
   /**
    * Rate limit on secured-page password attempts, keyed by client IP. Set in
-   * wrangler.toml. Unset means no limit.
+   * wrangler.toml. Unset refuses logins.
    */
   LOGIN_LIMIT?: RateLimit;
   /** HMAC key for signing secured-artifact cookies. Secret. */

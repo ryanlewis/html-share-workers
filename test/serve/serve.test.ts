@@ -633,10 +633,11 @@ describe('login rate limit', () => {
     await res.body?.cancel();
   });
 
-  it('has no limit without the binding', async () => {
-    const ip = '198.18.0.3';
-    for (let i = 0; i < 12; i++) expect((await login('deck', 'wrong', undefined, ip, { LOGIN_LIMIT: undefined })).status).toBe(401);
-    expect((await login('deck', PASSWORD, undefined, ip, { LOGIN_LIMIT: undefined })).status).toBe(303);
+  it('refuses logins without the binding rather than allowing unlimited attempts', async () => {
+    const res = await login('deck', PASSWORD, undefined, '198.18.0.3', { LOGIN_LIMIT: undefined });
+    expect(res.status).toBe(500);
+    expect(res.headers.get('Set-Cookie')).toBeNull();
+    expect(await res.text()).not.toContain('secret deck');
   });
 });
 
