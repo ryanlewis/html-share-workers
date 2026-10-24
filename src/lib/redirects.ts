@@ -58,18 +58,26 @@ export function redirectLocation(target: string, subPath: string | null, search:
   return `${path}${query === '' ? '' : `?${query}`}${fragment}`;
 }
 
-/** True for "/path" (not "//host") or a URL with a scheme, such as "https://host/path". */
+/**
+ * True for "/path" or a URL with a scheme, such as "https://host/path". Not
+ * "//host" or "/\\host", which browsers read as a link to another host.
+ */
 function isAbsoluteTarget(target: string): boolean {
-  if (target.startsWith('/')) return !target.startsWith('//');
+  if (target.startsWith('/')) return !/^\/[/\\]/.test(target);
   if (!/^[a-z][a-z0-9+.-]*:/i.test(target)) return false;
   return URL.canParse(target);
 }
 
-/** The decoded path of a target without trailing slashes, or null for a URL with a host. */
+/**
+ * The decoded path of a target without trailing slashes, or null for a URL
+ * with a host or a path that serving would not match (a segment that does
+ * not decode, or decodes to contain "/").
+ */
 function targetPath(target: string): string | null {
   if (!target.startsWith('/')) return null;
   try {
-    return trimSlashes(decodeURIComponent(new URL(target, NO_HOST).pathname));
+    const segments = new URL(target, NO_HOST).pathname.split('/').map(decodeURIComponent);
+    return segments.some((segment) => segment.includes('/')) ? null : trimSlashes(segments.join('/'));
   } catch {
     return null;
   }

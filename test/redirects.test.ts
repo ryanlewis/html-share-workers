@@ -45,6 +45,7 @@ describe('parseRedirects', () => {
     ['{"/lhv/":"index/"}', 'not "/..." or a full URL'],
     ['{"old":"//evil.example/"}', 'not "/..." or a full URL'],
     ['{"old":"https://"}', 'not "/..." or a full URL'],
+    ['{"old":"/\\\\evil.example/"}', 'not "/..." or a full URL'],
     ['{"/caf%E9/":"/x/"}', 'does not percent-decode'],
   ])('drops and logs %s', (text, message) => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -69,6 +70,10 @@ describe('parseRedirects', () => {
     const r = parseRedirects(text);
     for (const key of looped) expect(log.mock.calls[0]![0]).toContain(`"${key}" is in a redirect loop`);
     expect(r.exact.size).toBe(text.includes('"/d"') ? 1 : 0);
+  });
+
+  it('does not see a loop through an encoded slash', () => {
+    expect(parseRedirects('{"/a/b/":"/c/","/c/":"/a%2Fb"}').exact.size).toBe(2);
   });
 
   it('keeps a chain that ends', () => {
