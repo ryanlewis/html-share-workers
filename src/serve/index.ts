@@ -14,7 +14,7 @@ import {
 import { ipAllowed } from '../lib/cidr';
 import { type Gates, gatesFor } from '../lib/gates';
 import { verifyPassword } from '../lib/password';
-import { pointsAt, type Redirects, redirectsFor, trimSlashes } from '../lib/redirects';
+import { pointsAt, type Redirects, redirectLocation, redirectsFor, trimSlashes } from '../lib/redirects';
 import { COOKIE_NAME, cookieValues, setCookieHeader, signCookie, verifyCookie } from './cookie';
 import { forbiddenPage, indexPage, loginPage, notFoundPage } from './pages';
 
@@ -229,10 +229,7 @@ function exactRedirectFor(redirects: Redirects, url: URL, requestPath: RequestPa
   const path = trimSlashes(`/${requestPath.decoded.join('/')}`);
   const target = redirects.exact.get(path);
   if (target === undefined || pointsAt(target, url, path)) return null;
-  // Merge the request query into one the target already has.
-  const query = url.search.slice(1);
-  if (query === '') return target;
-  return `${target}${target.includes('?') ? '&' : '?'}${query}`;
+  return redirectLocation(target, null, url.search);
 }
 
 /** Redirect target for a top-level slug, keeping the sub-path and query. */
@@ -241,11 +238,7 @@ function redirectFor(redirects: Redirects, url: URL, path: RequestPath): string 
   if (slug === undefined) return null;
   const target = redirects.slugs.get(slug);
   if (target === undefined || pointsAt(target, url, `/${slug}`)) return null;
-  const rest = url.pathname.slice(1 + path.raw[0]!.length);
-  const location = `${trimSlashes(target)}${rest === '' ? '/' : rest}${url.search}`;
-  // A target of "/" plus a sub-path starting "//" would make a
-  // scheme-relative URL to another host.
-  return location.replace(/^\/{2,}/, '/');
+  return redirectLocation(target, url.pathname.slice(1 + path.raw[0]!.length), url.search);
 }
 
 /** Splits segments (after any prefix) into slug and path. */
