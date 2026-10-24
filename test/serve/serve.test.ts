@@ -596,6 +596,9 @@ describe('login rate limit', () => {
   });
 
   it('allows 10 attempts a minute from one IP, then answers 429 without checking the password', async () => {
+    // Miniflare's windows follow the wall clock, so a run that crossed a
+    // minute boundary would reset the count partway. Start well clear of one.
+    while (Date.now() % 60_000 > 58_000) await new Promise((resolve) => setTimeout(resolve, 100));
     const ip = '198.18.0.1';
     for (let i = 0; i < 9; i++) expect((await login('deck', 'wrong', undefined, ip)).status).toBe(401);
     expect((await login('deck', PASSWORD, undefined, ip)).status).toBe(303);
