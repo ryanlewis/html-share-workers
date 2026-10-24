@@ -6,6 +6,7 @@
  */
 import { type Cidr, parseCidr } from './cidr';
 import { validateGateName } from './artifacts';
+import { memoByText } from './memo';
 
 export interface Gates {
   /** Gate names with a valid name. The API and routing use these. */
@@ -67,3 +68,6 @@ export function parseGates(text: string | undefined): Gates {
   }
   return { names, ranges };
 }
+
+/** parseGates, run once per distinct IP_GATES value per isolate. */
+export const gatesFor = memoByText(parseGates);

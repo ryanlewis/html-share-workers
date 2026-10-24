@@ -59,8 +59,8 @@ Only gated slugs may have several segments (`pr/some-repo/123`).
 top-level slug: `/<slug>/...` redirects with its sub-path kept. A key starting
 with `/` is an exact path, which can have several segments and can be a gate
 root, matched against the decoded path. A trailing slash on the key or the
-request does not matter, and an entry whose target is its own path is
-skipped. A request query is added to the target's own query. Exact-path
+request does not matter. An entry whose target is its own path is dropped
+(see Configuration), and so is a full URL to this host at the same path. A request query is added to the target's own query. Exact-path
 redirects run before the IP check, so anyone can see where a gate root points;
 they reveal a path, not content, and the target is still gated. For example, to send `/lhv/` to the
 listing at `/lhv/index/`:
@@ -135,7 +135,12 @@ weak and includes a hash of the snippet, so changing the snippet changes it.
 
 Everything except the R2 bucket is a Worker secret: `COOKIE_SECRET`,
 `TOKEN_<MACHINE>`, `IP_GATES`, `REDIRECTS` and `ANALYTICS_SNIPPET`. The last
-three are optional. `wrangler.toml` has no `[vars]` block. For local runs,
+three are optional. `wrangler.toml` has no `[vars]` block. `IP_GATES` and
+`REDIRECTS` are parsed once per Worker isolate, so a bad value is logged once
+rather than on every request. Bad `REDIRECTS` entries are dropped and logged:
+a target that is not a non-empty string, the key `/`, a key ending in more than
+one slash, and a target that points back at the key's own path (including with
+a query or fragment). For local runs,
 copy `.dev.vars.example` to `.dev.vars` (git-ignored) and edit it:
 
 ```sh
