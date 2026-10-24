@@ -169,12 +169,15 @@ async function checkNesting(bucket: R2Bucket, scope: Scope, slug: string, nested
 }
 
 /**
- * Runs fn holding the slug's lock (src/lib/artifacts.ts). 409 if another
- * request holds it; nothing has been read or written by then.
+ * Runs fn holding the slug's lock, or its gate's (src/lib/artifacts.ts).
+ * 409 if another request holds it; nothing has been read or written by then.
  */
 async function withSlugLock<T>(bucket: R2Bucket, scope: Scope, slug: string, fn: () => Promise<T>): Promise<T> {
   const lock = await acquireSlugLock(bucket, scope, slug);
-  if (!lock) throw new ApiError(409, `another upload or delete of "${slug}" is in progress (a stale lock expires within ${LOCK_TTL_MS / 60_000} minutes)`);
+  if (!lock) {
+    const what = scope.visibility === 'gated' ? `in gate "${scope.gate}"` : `of "${slug}"`;
+    throw new ApiError(409, `another upload or delete ${what} is in progress (a stale lock expires within ${LOCK_TTL_MS / 60_000} minutes)`);
+  }
   try {
     return await fn();
   } finally {
