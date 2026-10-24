@@ -238,17 +238,21 @@ function redirectTarget(redirects: Record<string, unknown>, key: string): string
 
 /**
  * Redirect target for an exact-path key (one starting with "/"), keeping the
- * query. A trailing slash on either side is ignored, so "/lhv/" matches both
+ * query. Keys are matched against the decoded path. A trailing slash on either side is ignored, so "/lhv/" matches both
  * /lhv and /lhv/. A target equal to the request path is skipped, so an entry
  * can never redirect to itself.
  */
-function exactRedirectFor(redirects: Record<string, unknown>, url: URL): string | null {
+function exactRedirectFor(redirects: Record<string, unknown>, url: URL, requestPath: RequestPath): string | null {
   const trim = (p: string) => p.replace(/\/+$/, '');
-  const path = trim(url.pathname);
+  // Decoded, like slug keys, so a key can be written as plain text.
+  const path = trim(`/${requestPath.decoded.join('/')}`);
   if (path === '') return null;
   const target = redirectTarget(redirects, path) ?? redirectTarget(redirects, `${path}/`);
   if (target === null || trim(target.split('?')[0]!) === path) return null;
-  return `${target}${url.search}`;
+  // Merge the request query into one the target already has.
+  const query = url.search.slice(1);
+  if (query === '') return target;
+  return `${target}${target.includes('?') ? '&' : '?'}${query}`;
 }
 
 /** Redirect target for a top-level slug, keeping the sub-path and query. */
@@ -422,7 +426,7 @@ serve.get(
     // Exact-path redirects come first, so they work for gate roots such as
     // /lhv/. They only reveal a path, never content.
     const redirects = parseRedirects(c.env.REDIRECTS);
-    const exact = exactRedirectFor(redirects, url);
+    const exact = exactRedirectFor(redirects, url, path);
     if (exact) return redirect(exact, 308);
     const [first, ...rest] = path.decoded;
     if (first === '_') return serveSecured(c, rest, path.trailingSlash);

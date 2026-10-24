@@ -58,10 +58,11 @@ Only gated slugs may have several segments (`pr/some-repo/123`).
 `REDIRECTS` is a JSON object of key to target. A key without a slash is a
 top-level slug: `/<slug>/...` redirects with its sub-path kept. A key starting
 with `/` is an exact path, which can have several segments and can be a gate
-root. A trailing slash on the key or the request does not matter, and an entry
-whose target is its own path is skipped. Exact-path redirects run before the
-IP check, so anyone can see where a gate root points; they reveal a path, not
-content, and the target is still gated. For example, to send `/lhv/` to the
+root, matched against the decoded path. A trailing slash on the key or the
+request does not matter, and an entry whose target is its own path is
+skipped. A request query is added to the target's own query. Exact-path
+redirects run before the IP check, so anyone can see where a gate root points;
+they reveal a path, not content, and the target is still gated. For example, to send `/lhv/` to the
 listing at `/lhv/index/`:
 
 ```json

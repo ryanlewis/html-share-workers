@@ -255,6 +255,17 @@ describe('exact-path redirects', () => {
     expect(sub.headers.get('Location')).toBe('/d/x');
   });
 
+  it('merges the request query into a target query', async () => {
+    const res = await fetchPath('/acme/?a=1', { redirect: 'manual' }, { REDIRECTS: '{"/acme/":"/acme/index/?view=list"}' });
+    expect(res.headers.get('Location')).toBe('/acme/index/?view=list&a=1');
+  });
+
+  it('matches keys against the decoded path', async () => {
+    const res = await fetchPath('/caf%C3%A9/', { redirect: 'manual' }, { REDIRECTS: '{"/café/":"/x/"}' });
+    expect(res.status).toBe(308);
+    expect(res.headers.get('Location')).toBe('/x/');
+  });
+
   it('skips an entry that points at itself', async () => {
     const res = await fetchPath('/acme/', { headers }, { REDIRECTS: '{"/acme/":"/acme"}' });
     expect(res.status).toBe(404);
