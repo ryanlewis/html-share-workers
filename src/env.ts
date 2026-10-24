@@ -1,6 +1,7 @@
 /**
- * Worker bindings. Vars are set in wrangler.toml (placeholders) and
- * overridden at deploy time; secrets are set with `wrangler secret put`.
+ * Worker bindings. Everything except BUCKET is a secret, set with
+ * `wrangler secret put` (or in .dev.vars locally). wrangler.toml has no
+ * [vars], because a deploy would replace them.
  */
 export interface Env {
   /** Artifact storage. Key layout is in src/lib/artifacts.ts. */
@@ -8,14 +9,14 @@ export interface Env {
   /** HMAC key for signing secured-artifact cookies. Secret. */
   COOKIE_SECRET: string;
   /**
-   * JSON object of gate name -> IPv4/IPv6 CIDRs allowed to read /<gate>/,
+   * Secret. JSON object of gate name -> IPv4/IPv6 CIDRs allowed to read /<gate>/,
    * e.g. {"acme":["192.0.2.0/24","2001:db8::/32"]}. Read it with parseGates().
    */
   IP_GATES?: string;
-  /** HTML injected before </head> on HTML responses. Empty or unset means none. */
+  /** Secret. HTML injected before </head> on HTML responses. Empty or unset means none. */
   ANALYTICS_SNIPPET?: string;
-  /** JSON object of slug -> target path, e.g. {"some-slug":"/acme/some-slug/"}. */
-  REDIRECTS: string;
+  /** Secret. JSON object of slug -> target path, e.g. {"some-slug":"/acme/some-slug/"}. Unset means none. */
+  REDIRECTS?: string;
   /**
    * Upload bearer tokens, one secret per machine: TOKEN_M5P, TOKEN_WORKLAPTOP, ...
    * Read them with machineTokens() rather than directly.

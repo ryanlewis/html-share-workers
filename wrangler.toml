@@ -7,10 +7,12 @@ compatibility_date = "2026-08-01"
 binding = "BUCKET"
 bucket_name = "html-share"
 
-# Placeholder values only. Real values are set at deploy time; secrets
-# (COOKIE_SECRET, TOKEN_<MACHINE>) go in with `wrangler secret put`, or in
-# .dev.vars for local runs. See src/env.ts for what each one means.
-[vars]
-IP_GATES = '{"example":["192.0.2.0/24","2001:db8::/32"]}'
-ANALYTICS_SNIPPET = ""
-REDIRECTS = "{}"
+# No [vars] block: `wrangler deploy` would replace the deployed vars with it.
+# Config is held as secrets, which survive deploys. The Worker expects:
+#   COOKIE_SECRET       HMAC key for secured-page cookies
+#   TOKEN_<MACHINE>     upload bearer token, one per machine
+#   IP_GATES            JSON: gate name -> CIDR list (optional)
+#   REDIRECTS           JSON: slug -> target path (optional)
+#   ANALYTICS_SNIPPET   HTML added to <head> (optional)
+# See "Deploying" in the README. The `secrets.required` key is not used: it
+# cannot name the TOKEN_<MACHINE> secrets, and the last three are optional.

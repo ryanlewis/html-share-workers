@@ -116,15 +116,61 @@ When `ANALYTICS_SNIPPET` is set, it is appended to `<head>` on every HTML
 response, including the generated pages. The ETag of a rewritten page is
 weak and includes a hash of the snippet, so changing the snippet changes it.
 
-## Bindings
+## Configuration
 
-Vars in `wrangler.toml` are placeholders. For local runs, put secrets in
-`.dev.vars` (git-ignored):
+Everything except the R2 bucket is a Worker secret: `COOKIE_SECRET`,
+`TOKEN_<MACHINE>`, `IP_GATES`, `REDIRECTS` and `ANALYTICS_SNIPPET`. The last
+three are optional. `wrangler.toml` has no `[vars]` block. For local runs,
+copy `.dev.vars.example` to `.dev.vars` (git-ignored) and edit it:
 
+```sh
+cp .dev.vars.example .dev.vars
 ```
-COOKIE_SECRET=local-dev-only
-TOKEN_M5P=local-dev-only
+
+## Deploying
+
+Set each secret once with `wrangler secret put <NAME>`. It prompts for the
+value, or reads standard input, so JSON can come from a file:
+
+```sh
+wrangler secret put COOKIE_SECRET
+wrangler secret put TOKEN_M5P
+wrangler secret put IP_GATES < gates.json
+wrangler secret put REDIRECTS < redirects.json
+wrangler secret put ANALYTICS_SNIPPET < snippet.html
 ```
+
+`gates.json` maps each gate name to its CIDRs, and `redirects.json` maps a
+slug to a target path:
+
+```json
+{"acme":["192.0.2.0/24","2001:db8::/32"],"example":["198.51.100.0/24"]}
+```
+
+```json
+{"old-overview":"/acme/old-overview/"}
+```
+
+Secrets survive `wrangler deploy`. Values in a `[vars]` block do not: a deploy
+replaces the deployed vars with the file's, so real values would be lost and
+gated pages would 404 until someone noticed. Keep the gate ranges and
+redirects out of the repository; only `.dev.vars.example` holds placeholders.
+
+Putting or deleting a secret takes effect without a separate deploy.
+
+### Machine tokens
+
+To add a machine, pick a name and generate a token, then store it as
+`TOKEN_<NAME>` (upper case; the uploader shows as the lower-case name):
+
+```sh
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > token.txt
+wrangler secret put TOKEN_WORKLAPTOP < token.txt
+```
+
+Move `token.txt` to that machine as `~/.config/htmlshare/token` and delete
+the other copy. To revoke a
+machine, run `wrangler secret delete TOKEN_WORKLAPTOP`.
 
 ## Running locally
 
