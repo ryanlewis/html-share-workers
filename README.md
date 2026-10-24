@@ -61,8 +61,12 @@ with `/` is an exact path, which can have several segments and can be a gate
 root, matched against the decoded path. A trailing slash on the key or the
 request does not matter. An entry whose target is its own path is dropped
 when parsed (see Configuration). A full URL to the serving host at the same
-path cannot be caught then, so it is skipped on each request instead. A request query is added to the target's own query. Exact-path
-redirects run before the IP check, so anyone can see where a gate root points;
+path cannot be caught then, so it is skipped on each request instead. A
+target must be an absolute path (`/...`) or a full URL with a scheme. The
+Location is the target's path, then the request sub-path for a slug key, then
+the target's query and the request query joined with `&`, then the target's
+fragment: `{"old":"/acme/old/?ref=x"}` sends `/old/page?a=1` to
+`/acme/old/page?ref=x&a=1`. Exact-path redirects run before the IP check, so anyone can see where a gate root points;
 they reveal a path, not content, and the target is still gated. For example, to send `/lhv/` to the
 listing at `/lhv/index/`:
 
@@ -139,9 +143,12 @@ Everything except the R2 bucket is a Worker secret: `COOKIE_SECRET`,
 three are optional. `wrangler.toml` has no `[vars]` block. `IP_GATES` and
 `REDIRECTS` are parsed once per Worker isolate, so a bad value is logged once
 rather than on every request. Bad `REDIRECTS` entries are dropped and logged:
-a target that is not a non-empty string, the key `/`, a key ending in more than
-one slash, and a target that points back at the key's own path (including with
-a query or fragment). For local runs,
+a target that is not a non-empty string, a target that is neither `/...` nor a
+full URL, a slug key containing `/`, the key `/`, a key ending in more than one
+slash, an exact key that does not percent-decode (keys are decoded, so
+`/caf%C3%A9/` and `/café/` are the same), a target that points back at the
+key's own path (including with a query or fragment), and every exact key in a
+loop of exact keys (`/a/` to `/b/` to `/a/`). For local runs,
 copy `.dev.vars.example` to `.dev.vars` (git-ignored) and edit it:
 
 ```sh

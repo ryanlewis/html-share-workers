@@ -187,6 +187,11 @@ describe('redirects', () => {
     expect(res.headers.get('Location')).toBe(to);
   });
 
+  it('puts the sub-path before the target query', async () => {
+    const res = await fetchPath('/old/page?a=1', { redirect: 'manual' }, { REDIRECTS: '{"old":"/acme/old/?ref=x"}' });
+    expect(res.headers.get('Location')).toBe('/acme/old/page?ref=x&a=1');
+  });
+
   it('never produces a scheme-relative Location', async () => {
     const res = await fetchPath('/old//evil.example/x', { redirect: 'manual' }, { REDIRECTS: '{"old":"/"}' });
     expect(res.status).toBe(308);
@@ -264,6 +269,11 @@ describe('exact-path redirects', () => {
     const res = await fetchPath('/caf%C3%A9/', { redirect: 'manual' }, { REDIRECTS: '{"/café/":"/x/"}' });
     expect(res.status).toBe(308);
     expect(res.headers.get('Location')).toBe('/x/');
+  });
+
+  it('puts the request query before the target fragment', async () => {
+    const res = await fetchPath('/acme/?utm=x', { redirect: 'manual' }, { REDIRECTS: '{"/acme/":"/acme/index/#latest"}' });
+    expect(res.headers.get('Location')).toBe('/acme/index/?utm=x#latest');
   });
 
   it('skips an entry that points at itself', async () => {
