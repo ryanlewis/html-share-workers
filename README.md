@@ -158,17 +158,23 @@ redirects out of the repository; only `.dev.vars.example` holds placeholders.
 
 Putting or deleting a secret takes effect without a separate deploy.
 
+When moving a Worker that still has these as plain vars: run `wrangler secret
+put` for each one before the first `wrangler deploy` of this version, and check
+the gated URLs afterwards. If a secret put is refused because a var of the same
+name exists, delete the var in the dashboard first and put the secret straight
+away; gated pages 404 in between.
+
 ### Machine tokens
 
 To add a machine, pick a name and generate a token, then store it as
 `TOKEN_<NAME>` (upper case; the uploader shows as the lower-case name):
 
 ```sh
-openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > token.txt
-wrangler secret put TOKEN_WORKLAPTOP < token.txt
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n' > ~/token.txt
+wrangler secret put TOKEN_WORKLAPTOP < ~/token.txt
 ```
 
-Move `token.txt` to that machine as `~/.config/htmlshare/token` and delete
+Move `~/token.txt` to that machine as `~/.config/htmlshare/token` and delete
 the other copy. To revoke a
 machine, run `wrangler secret delete TOKEN_WORKLAPTOP`.
 
