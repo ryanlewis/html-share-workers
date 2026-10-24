@@ -229,14 +229,34 @@ function parseRedirects(json: string | undefined): Record<string, unknown> {
   }
 }
 
+/** A REDIRECTS target, or null if the entry is missing or not a non-empty string. */
+function redirectTarget(redirects: Record<string, unknown>, key: string): string | null {
+  if (!Object.hasOwn(redirects, key)) return null;
+  const target = redirects[key];
+  return typeof target === 'string' && target !== '' ? target : null;
+}
+
+/**
+ * Redirect target for an exact-path key (one starting with "/"), keeping the
+ * query. A trailing slash on either side is ignored, so "/lhv/" matches both
+ * /lhv and /lhv/. A target equal to the request path is skipped, so an entry
+ * can never redirect to itself.
+ */
+function exactRedirectFor(redirects: Record<string, unknown>, url: URL): string | null {
+  const trim = (p: string) => p.replace(/\/+$/, '');
+  const path = trim(url.pathname);
+  if (path === '') return null;
+  const target = redirectTarget(redirects, path) ?? redirectTarget(redirects, `${path}/`);
+  if (target === null || trim(target.split('?')[0]!) === path) return null;
+  return `${target}${url.search}`;
+}
+
 /** Redirect target for a top-level slug, keeping the sub-path and query. */
-function redirectFor(env: Env, url: URL, path: RequestPath): string | null {
+function redirectFor(redirects: Record<string, unknown>, url: URL, path: RequestPath): string | null {
   const slug = path.decoded[0];
   if (slug === undefined) return null;
-  const redirects = parseRedirects(env.REDIRECTS);
-  if (!Object.hasOwn(redirects, slug)) return null;
-  const target = redirects[slug];
-  if (typeof target !== 'string' || target === '') return null;
+  const target = redirectTarget(redirects, slug);
+  if (target === null) return null;
   const rest = url.pathname.slice(1 + path.raw[0]!.length);
   const location = `${target.replace(/\/+$/, '')}${rest === '' ? '/' : rest}${url.search}`;
   // A target of "/" plus a sub-path starting "//" would make a
@@ -399,12 +419,17 @@ serve.get(
     const url = new URL(c.req.url);
     const path = splitPath(url.pathname);
     if (!path) return notFound();
+    // Exact-path redirects come first, so they work for gate roots such as
+    // /lhv/. They only reveal a path, never content.
+    const redirects = parseRedirects(c.env.REDIRECTS);
+    const exact = exactRedirectFor(redirects, url);
+    if (exact) return redirect(exact, 308);
     const [first, ...rest] = path.decoded;
     if (first === '_') return serveSecured(c, rest, path.trailingSlash);
     // A gate takes priority over a redirect or public artifact of the same name.
     const gates = parseGates(c.env.IP_GATES);
     if (first !== undefined && gates.names.has(first)) return serveGated(c, gates, first, rest, path.trailingSlash);
-    const target = redirectFor(c.env, url, path);
+    const target = redirectFor(redirects, url, path);
     if (target) return redirect(target, 308);
     return servePublic(c, path);
   }),

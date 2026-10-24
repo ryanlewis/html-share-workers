@@ -217,6 +217,50 @@ describe('redirects', () => {
   });
 });
 
+describe('exact-path redirects', () => {
+  const REDIRECTS = JSON.stringify({ '/acme/': '/acme/index/' });
+  const headers = { 'CF-Connecting-IP': '192.0.2.10' };
+
+  it.each([
+    ['/acme/', '/acme/index/'],
+    ['/acme', '/acme/index/'],
+    ['/acme/?a=1', '/acme/index/?a=1'],
+  ])('308s %s to %s before the gate check', async (from, to) => {
+    const res = await fetchPath(from, { redirect: 'manual' }, { REDIRECTS });
+    expect(res.status).toBe(308);
+    expect(res.headers.get('Location')).toBe(to);
+  });
+
+  it('leaves the target to the gate', async () => {
+    await putArtifactIndex(env.BUCKET, 'index', '<p>listing</p>', gated('acme'));
+    const allowed = await fetchPath('/acme/index/', { headers }, { REDIRECTS });
+    expect(allowed.status).toBe(200);
+    expect(await allowed.text()).toBe('<p>listing</p>');
+    expect((await fetchPath('/acme/index/', { headers: { 'CF-Connecting-IP': '203.0.113.5' } }, { REDIRECTS })).status).toBe(403);
+  });
+
+  it('matches only the exact path', async () => {
+    await putArtifactIndex(env.BUCKET, 'report', '<p>report</p>', gated('acme'));
+    expect((await fetchPath('/acme/report/', { headers }, { REDIRECTS })).status).toBe(200);
+  });
+
+  it('works for nested paths and keeps single-segment keys apart', async () => {
+    const res = await fetchPath(
+      '/a/b/',
+      { redirect: 'manual' },
+      { REDIRECTS: JSON.stringify({ '/a/b': '/c/', a: '/d/' }) },
+    );
+    expect(res.headers.get('Location')).toBe('/c/');
+    const sub = await fetchPath('/a/x', { redirect: 'manual' }, { REDIRECTS: JSON.stringify({ '/a/b': '/c/', a: '/d/' }) });
+    expect(sub.headers.get('Location')).toBe('/d/x');
+  });
+
+  it('skips an entry that points at itself', async () => {
+    const res = await fetchPath('/acme/', { headers }, { REDIRECTS: '{"/acme/":"/acme"}' });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('gated artifacts', () => {
   beforeEach(async () => {
     await putArtifactIndex(env.BUCKET, 'report', '<p>acme report</p>', gated('acme'));
