@@ -519,7 +519,7 @@ describe('secured artifacts', () => {
       const res = await fetchPath('/_/deck/', {
         method: 'POST',
         body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': nextClientIp() },
       });
       expect(res.headers.get('Set-Cookie')).toBeNull();
       const html = await expectLoginForm(res);
