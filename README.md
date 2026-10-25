@@ -106,13 +106,15 @@ changes the hash and invalidates them. If `COOKIE_SECRET` is unset, secured page
 
 Password attempts are limited to 10 a minute per client IP
 (`CF-Connecting-IP`; an IPv6 client counts as its /64), counted across all
-secured pages. Over the limit the
-Worker answers 429 with the login form and a "too many attempts" message,
-without looking up the artifact or checking the password. Page views are
-not counted. The limit is the `LOGIN_LIMIT` rate-limit binding in
-`wrangler.toml`; Cloudflare counts per location and approximately, so treat
-it as a brake on guessing, not an exact cap. If the binding is missing,
-logins return 500 rather than going unlimited.
+secured pages. The minute starts at a client's first attempt. Over the limit
+the Worker answers 429 with the login form, a "too many attempts" message and
+`Retry-After`, without looking up the artifact or checking the password.
+Page views are not counted. Each client IP has its own `LoginLimiter`
+Durable Object (the `LOGIN_LIMIT` binding in `wrangler.toml`), created in
+Western Europe, so the count is exact whichever connection or Cloudflare
+location a request comes through. When the minute ends an alarm deletes the
+count, so idle objects hold no data. If the binding is missing, logins
+return 500 rather than going unlimited.
 
 ### IP gates
 
@@ -160,7 +162,7 @@ weak and includes a hash of the snippet, so changing the snippet changes it.
 
 ## Configuration
 
-Everything except the R2 bucket and the `LOGIN_LIMIT` rate limit (both in
+Everything except the R2 bucket and the `LOGIN_LIMIT` Durable Object (both in
 `wrangler.toml`, see "Secured cookies") is a Worker secret: `COOKIE_SECRET`,
 `TOKEN_<MACHINE>`, `IP_GATES`, `REDIRECTS` and `ANALYTICS_SNIPPET`. The last
 three are optional. `wrangler.toml` has no `[vars]` block. `IP_GATES` and

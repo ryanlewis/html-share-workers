@@ -13,3 +13,4 @@ app.all('/api/*', (c) => c.json({ error: 'not found' }, 404));
 app.route('/', serve);
 
 export default app;
+export { LoginLimiter } from './lib/login-limiter';
