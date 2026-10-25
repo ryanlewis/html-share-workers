@@ -3,6 +3,9 @@ name = "html-share"
 main = "src/index.ts"
 compatibility_date = "2026-08-01"
 
+# Keep variables set outside this file (dashboard or `--var`) across deploys.
+keep_vars = true
+
 # Served on a Workers custom domain: Cloudflare creates the DNS record and the
 # certificate. The workers.dev URL stays on for testing.
 routes = [{ pattern = "share.rlew.io", custom_domain = true }]
@@ -22,12 +25,13 @@ class_name = "LoginLimiter"
 tag = "v1"
 new_sqlite_classes = ["LoginLimiter"]
 
-# No [vars] block: `wrangler deploy` would replace the deployed vars with it.
-# Config is held as secrets, which survive deploys. The Worker expects:
-#   COOKIE_SECRET       HMAC key for secured-page cookies
-#   TOKEN_<MACHINE>     upload bearer token, one per machine
-#   IP_GATES            JSON: gate name -> CIDR list (optional)
-#   REDIRECTS           JSON: slug -> target path (optional)
-#   ANALYTICS_SNIPPET   HTML added to <head> (optional)
+# No [vars] block, so no values here: the repo is public. REDIRECTS is a
+# plaintext var held on Cloudflare; the rest are secrets, which survive deploys.
+# The Worker expects:
+#   COOKIE_SECRET       secret: HMAC key for secured-page cookies
+#   TOKEN_<MACHINE>     secret: upload bearer token, one per machine
+#   IP_GATES            secret: JSON, gate name -> CIDR list (optional)
+#   REDIRECTS           var: JSON, slug -> target path (optional)
+#   ANALYTICS_SNIPPET   secret: HTML added to <head> (optional)
 # See "Deploying" in the README. The `secrets.required` key is not used: it
 # cannot name the TOKEN_<MACHINE> secrets, and the last three are optional.

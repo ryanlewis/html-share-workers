@@ -163,9 +163,11 @@ weak and includes a hash of the snippet, so changing the snippet changes it.
 ## Configuration
 
 Everything except the R2 bucket and the `LOGIN_LIMIT` Durable Object (both in
-`wrangler.toml`, see "Secured cookies") is a Worker secret: `COOKIE_SECRET`,
-`TOKEN_<MACHINE>`, `IP_GATES`, `REDIRECTS` and `ANALYTICS_SNIPPET`. The last
-three are optional. `wrangler.toml` has no `[vars]` block. `IP_GATES` and
+`wrangler.toml`, see "Secured cookies") is a Worker secret (`COOKIE_SECRET`,
+`TOKEN_<MACHINE>`, `IP_GATES` and `ANALYTICS_SNIPPET`) except `REDIRECTS`, which
+is a plaintext variable so it can be read back in the dashboard. `IP_GATES`,
+`REDIRECTS` and `ANALYTICS_SNIPPET` are optional. `wrangler.toml` has no
+`[vars]` block and sets `keep_vars = true`. `IP_GATES` and
 `REDIRECTS` are parsed once per Worker isolate, so a bad value is logged once
 rather than on every request. Bad `REDIRECTS` entries are dropped and logged:
 a target that is not a non-empty string, a target that is neither `/...` nor a
@@ -189,7 +191,6 @@ value, or reads standard input, so JSON can come from a file:
 wrangler secret put COOKIE_SECRET
 wrangler secret put TOKEN_M5P
 wrangler secret put IP_GATES < gates.json
-wrangler secret put REDIRECTS < redirects.json
 wrangler secret put ANALYTICS_SNIPPET < snippet.html
 ```
 
@@ -204,10 +205,20 @@ slug to a target path:
 {"old-overview":"/acme/old-overview/"}
 ```
 
+`REDIRECTS` is a plaintext variable, not a secret. Set it with a deploy:
+
+```sh
+npx wrangler deploy --var REDIRECTS:"$(jq -c . redirects.json)"
+```
+
+You can also edit it in the dashboard. Later deploys keep it because
+`wrangler.toml` sets `keep_vars = true`, and the dashboard shows its value. A
+variable and a secret cannot share a name, so to move an existing `REDIRECTS`
+secret, run `wrangler secret delete REDIRECTS` first, then deploy with `--var`.
+
 Secrets survive `wrangler deploy`. Values in a `[vars]` block do not: a deploy
-replaces the deployed vars with the file's, so real values would be lost and
-gated pages would 404 until someone noticed. Keep the gate ranges and
-redirects out of the repository; only `.dev.vars.example` holds placeholders.
+replaces the deployed vars with the file's. Keep the gate ranges and redirects
+out of the repository; only `.dev.vars.example` holds placeholders.
 
 Putting or deleting a secret takes effect without a separate deploy.
 
