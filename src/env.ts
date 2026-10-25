@@ -1,9 +1,10 @@
 import type { LoginLimiter } from './lib/login-limiter';
 
 /**
- * Worker bindings. Everything except BUCKET and LOGIN_LIMIT is a secret, set with
- * `wrangler secret put` (or in .dev.vars locally). wrangler.toml has no
- * [vars], because a deploy would replace them.
+ * Worker bindings. Everything except BUCKET, LOGIN_LIMIT and REDIRECTS is a
+ * secret, set with `wrangler secret put` (or in .dev.vars locally). REDIRECTS
+ * is a plaintext var held on Cloudflare. wrangler.toml has no [vars] (the repo
+ * is public) and sets keep_vars so a deploy leaves the var alone.
  */
 export interface Env {
   /** Artifact storage. Key layout is in src/lib/artifacts.ts. */
@@ -23,7 +24,7 @@ export interface Env {
   /** Secret. HTML injected before </head> on HTML responses. Empty or unset means none. */
   ANALYTICS_SNIPPET?: string;
   /**
-   * Secret. JSON object of slug or exact path -> target, e.g. {"some-slug":"/acme/some-slug/"}.
+   * Plaintext var. JSON object of slug or exact path -> target, e.g. {"some-slug":"/acme/some-slug/"}.
    * Unset means none. Read it with redirectsFor().
    */
   REDIRECTS?: string;
