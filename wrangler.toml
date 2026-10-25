@@ -12,13 +12,15 @@ workers_dev = true
 binding = "BUCKET"
 bucket_name = "html-share"
 
-# Password attempts on secured pages: 10 a minute per client IP. Cloudflare
-# counts per location and approximately. namespace_id is any number unique
-# within the account.
-[[ratelimits]]
+# Password attempts on secured pages: 10 a minute per client IP, counted by
+# one Durable Object per IP (src/lib/login-limiter.ts).
+[[durable_objects.bindings]]
 name = "LOGIN_LIMIT"
-namespace_id = "1001"
-simple = { limit = 10, period = 60 }
+class_name = "LoginLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LoginLimiter"]
 
 # No [vars] block: `wrangler deploy` would replace the deployed vars with it.
 # Config is held as secrets, which survive deploys. The Worker expects:

@@ -1,3 +1,5 @@
+import type { LoginLimiter } from './lib/login-limiter';
+
 /**
  * Worker bindings. Everything except BUCKET and LOGIN_LIMIT is a secret, set with
  * `wrangler secret put` (or in .dev.vars locally). wrangler.toml has no
@@ -7,10 +9,10 @@ export interface Env {
   /** Artifact storage. Key layout is in src/lib/artifacts.ts. */
   BUCKET: R2Bucket;
   /**
-   * Rate limit on secured-page password attempts, keyed by client IP. Set in
-   * wrangler.toml. Unset refuses logins.
+   * Durable Objects counting secured-page password attempts, one per client
+   * IP. Set in wrangler.toml. Unset refuses logins.
    */
-  LOGIN_LIMIT?: RateLimit;
+  LOGIN_LIMIT?: DurableObjectNamespace<LoginLimiter>;
   /** HMAC key for signing secured-artifact cookies. Secret. */
   COOKIE_SECRET: string;
   /**

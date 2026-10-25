@@ -13,6 +13,7 @@ import {
 } from '../lib/artifacts';
 import { clientNetwork, ipAllowed } from '../lib/cidr';
 import { type Gates, gatesFor } from '../lib/gates';
+import type { LoginAttempt, LoginLimiter } from '../lib/login-limiter';
 import { verifyPassword } from '../lib/password';
 import { pointsAt, type Redirects, redirectLocation, redirectsFor, trimSlashes } from '../lib/redirects';
 import { COOKIE_NAME, cookieValues, setCookieHeader, signCookie, verifyCookie } from './cookie';
@@ -320,11 +321,12 @@ async function serveSecured(c: Ctx, segments: string[], trailingSlash: boolean):
 /**
  * Counts a password attempt against the client IP (an IPv6 client's /64),
  * across all secured slugs, so spreading guesses over pages gains nothing.
- * Runs before the artifact lookup and the PBKDF2 check.
+ * Runs before the artifact lookup and the PBKDF2 check. Each key has one
+ * LoginLimiter object, placed in Western Europe when first created.
  */
-async function loginAllowed(c: Ctx, limiter: RateLimit): Promise<boolean> {
+function loginAttempt(c: Ctx, limiter: DurableObjectNamespace<LoginLimiter>): Promise<LoginAttempt> {
   const key = clientNetwork(c.req.header('CF-Connecting-IP') ?? '') ?? 'unknown';
-  return (await limiter.limit({ key })).success;
+  return limiter.getByName(key, { locationHint: 'weur' }).attempt();
 }
 
 async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean): Promise<Response> {
@@ -340,7 +342,12 @@ async function securedLogin(c: Ctx, segments: string[], trailingSlash: boolean):
     console.error('LOGIN_LIMIT is not bound; refusing secured logins');
     return htmlResponse('Secured pages are not configured.', 500);
   }
-  if (!(await loginAllowed(c, limiter))) return htmlResponse(loginPage(loginFormAction(c), 'limited'), 429);
+  const attempt = await loginAttempt(c, limiter);
+  if (!attempt.allowed) {
+    const response = htmlResponse(loginPage(loginFormAction(c), 'limited'), 429);
+    response.headers.set('Retry-After', String(attempt.retryAfter));
+    return response;
+  }
   const meta = await readArtifactMeta(c.env.BUCKET, SECURED, parts.slug);
   if (!meta?.pwhash) return notFound();
 

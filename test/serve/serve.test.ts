@@ -1,8 +1,10 @@
-import { env } from 'cloudflare:workers';
+import { runDurableObjectAlarm, runInDurableObject } from 'cloudflare:test';
+import { env, exports } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../src/env';
 import app from '../../src/index';
 import { type ArtifactMeta, putArtifactIndex, type Visibility } from '../../src/lib/artifacts';
+import type { LoginLimiter } from '../../src/lib/login-limiter';
 import { hashPassword } from '../../src/lib/password';
 import { COOKIE_TTL_SECONDS, signCookie } from '../../src/serve/cookie';
 
@@ -570,16 +572,18 @@ describe('login rate limit', () => {
     await putArtifactIndex(env.BUCKET, 'other', '<p>other deck</p>', meta('secured', { pwhash: await hashPassword('other', 1) }));
   });
 
-  /** A limiter that records its keys and allows the first `allow` calls. */
-  function fakeLimiter(allow: number): RateLimit & { keys: string[] } {
-    const keys: string[] = [];
-    return {
-      keys,
-      async limit({ key }) {
-        keys.push(key);
-        return { success: keys.length <= allow };
-      },
-    };
+  const limiterFor = (key: string) => env.LOGIN_LIMIT!.getByName(key);
+
+  /** The count in a client key's current window, or undefined if it holds none. */
+  function countFor(key: string): Promise<number | undefined> {
+    return runInDurableObject(limiterFor(key), (_limiter: LoginLimiter, state) => state.storage.kv.get<{ count: number }>('window')?.count);
+  }
+
+  /** Sets a client key's window, opened `ageMs` ago. */
+  function setWindow(key: string, count: number, ageMs = 0): Promise<void> {
+    return runInDurableObject(limiterFor(key), (_limiter: LoginLimiter, state) => {
+      state.storage.kv.put('window', { start: Date.now() - ageMs, count });
+    });
   }
 
   async function expectLimited(res: Response): Promise<void> {
@@ -595,42 +599,73 @@ describe('login rate limit', () => {
     expect(env.LOGIN_LIMIT).toBeDefined();
   });
 
-  it('allows 10 attempts a minute from one IP, then answers 429 without checking the password', async () => {
-    // Miniflare's windows follow the wall clock, so a run that crossed a
-    // minute boundary would reset the count partway. Start well clear of one.
-    while (Date.now() % 60_000 > 58_000) await new Promise((resolve) => setTimeout(resolve, 100));
+  it('allows 10 attempts a minute from one IP across separate requests, then answers 429 without checking the password', async () => {
     const ip = '198.18.0.1';
     for (let i = 0; i < 9; i++) expect((await login('deck', 'wrong', undefined, ip)).status).toBe(401);
     expect((await login('deck', PASSWORD, undefined, ip)).status).toBe(303);
     await expectLimited(await login('deck', PASSWORD, undefined, ip));
     // The count is per IP, not per slug.
     await expectLimited(await login('other', 'other', undefined, ip));
+    // A request through the Worker's own entry point shares the same count.
+    const res = await exports.default.fetch('https://share.test/_/deck/', {
+      method: 'POST',
+      body: new URLSearchParams({ password: PASSWORD }),
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': ip },
+      redirect: 'manual',
+    });
+    await expectLimited(res);
     expect((await login('deck', PASSWORD, undefined, '198.18.0.2')).status).toBe(303);
   });
 
-  it('keys on CF-Connecting-IP and stops before the password check', async () => {
-    const limiter = fakeLimiter(1);
-    expect((await login('deck', PASSWORD, undefined, '192.0.2.7', { LOGIN_LIMIT: limiter })).status).toBe(303);
-    await expectLimited(await login('deck', PASSWORD, undefined, '192.0.2.7', { LOGIN_LIMIT: limiter }));
-    expect(limiter.keys).toEqual(['192.0.2.7', '192.0.2.7']);
+  it('keys on CF-Connecting-IP', async () => {
+    expect((await login('deck', 'wrong', undefined, '192.0.2.7')).status).toBe(401);
+    expect(await countFor('192.0.2.7')).toBe(1);
   });
 
   it('counts an IPv6 client by its /64, so it cannot rotate addresses', async () => {
-    const limiter = fakeLimiter(Infinity);
     for (const ip of ['2001:db8:1:2::1', '2001:DB8:1:2:ffff:ffff:ffff:fffe', '2001:db8:1:3::1', '::ffff:192.0.2.9']) {
-      expect((await login('deck', 'wrong', undefined, ip, { LOGIN_LIMIT: limiter })).status).toBe(401);
+      expect((await login('deck', 'wrong', undefined, ip)).status).toBe(401);
     }
-    expect(limiter.keys).toEqual(['2001:db8:1:2::/64', '2001:db8:1:2::/64', '2001:db8:1:3::/64', '192.0.2.9']);
+    expect(await countFor('2001:db8:1:2::/64')).toBe(2);
+    expect(await countFor('2001:db8:1:3::/64')).toBe(1);
+    expect(await countFor('192.0.2.9')).toBe(1);
   });
 
   it('answers 429 for unknown slugs too, so the limit also covers probing', async () => {
-    await expectLimited(await login('nope', PASSWORD, undefined, '192.0.2.8', { LOGIN_LIMIT: fakeLimiter(0) }));
+    await setWindow('192.0.2.8', 10);
+    await expectLimited(await login('nope', PASSWORD, undefined, '192.0.2.8'));
+  });
+
+  it('says when to retry, and does not extend the window for refused attempts', async () => {
+    await setWindow('192.0.2.10', 10, 15_000);
+    const res = await login('deck', PASSWORD, undefined, '192.0.2.10');
+    await expectLimited(res);
+    expect(res.headers.get('Retry-After')).toBe('45');
+    expect(await countFor('192.0.2.10')).toBe(10);
+  });
+
+  it('opens a new window once a minute has passed', async () => {
+    await setWindow('192.0.2.11', 10, 61_000);
+    expect((await login('deck', PASSWORD, undefined, '192.0.2.11')).status).toBe(303);
+    expect(await countFor('192.0.2.11')).toBe(1);
+  });
+
+  it('keeps a live window when its alarm runs early, and deletes it once it has ended', async () => {
+    expect((await login('deck', 'wrong', undefined, '192.0.2.12')).status).toBe(401);
+    const stub = limiterFor('192.0.2.12');
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await countFor('192.0.2.12')).toBe(1);
+    await setWindow('192.0.2.12', 1, 61_000);
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    expect(await runInDurableObject(stub, (_limiter: LoginLimiter, state) => [...state.storage.kv.list()].length)).toBe(0);
   });
 
   it('does not limit page views', async () => {
-    const res = await fetchPath('/_/deck/', {}, { LOGIN_LIMIT: fakeLimiter(0) });
+    await setWindow('192.0.2.13', 10);
+    const res = await fetchPath('/_/deck/', { headers: { 'CF-Connecting-IP': '192.0.2.13' } });
     expect(res.status).toBe(401);
     await res.body?.cancel();
+    expect(await countFor('192.0.2.13')).toBe(10);
   });
 
   it('refuses logins without the binding rather than allowing unlimited attempts', async () => {
