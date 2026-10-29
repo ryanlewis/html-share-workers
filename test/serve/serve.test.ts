@@ -185,6 +185,11 @@ describe('generated index', () => {
     expect(html).not.toContain(pwhash);
     expect(html).not.toContain('pbkdf2');
   });
+
+  it('links back to rlew.io in the footer', async () => {
+    const html = await (await fetchPath('/')).text();
+    expect(html).toContain('<footer class="meta"><a href="https://rlew.io/">rlew.io</a></footer>');
+  });
 });
 
 describe('redirects', () => {
