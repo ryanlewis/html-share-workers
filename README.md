@@ -65,6 +65,7 @@ lock is taken.
 | `/<slug>/<path>` | The R2 object. A folder path serves its `index.html`; a folder without a trailing slash 308s to the slash form. |
 | `/<slug>/...` where slug is in `REDIRECTS` | 308 to the target, keeping the sub-path and query. Checked before the public lookup. |
 | An exact path in `REDIRECTS` (a key starting with `/`) | 308 to the target, keeping the query but not matching sub-paths. Checked first, before secured, gated and public lookups. |
+| An exact path in `REWRITES` | Served as the target folder path, with no redirect: the URL stays as requested. Checked after exact redirects. The target then goes through the rows below, so a gated target still needs its gate. |
 | `/_/<slug>/...` | The object if the request has a valid cookie, otherwise a password form (401). |
 | `/<gate>/<slug>/...` | For each gate in `IP_GATES`: the object if `CF-Connecting-IP` is in that gate's ranges, otherwise 403. Checked before redirects and public artifacts. |
 
@@ -82,6 +83,21 @@ fragment: `{"old":"/acme/old/?ref=x"}` sends `/old/page?a=1` to
 `/acme/old/page?ref=x&a=1`. Exact-path redirects run before the IP check, so anyone can see where a gate root points;
 they reveal a path, not content, and the target is still gated. For example, to send `/lhv/` to the
 listing at `/lhv/index/`:
+
+```json
+{"/lhv/": "/lhv/index/"}
+```
+
+`REWRITES` is a JSON object of exact path to folder path on this host. The
+key's path is served as the target, and the browser stays on the URL it asked
+for. Keys follow the exact-key rules above. A target must start and end with
+`/`, with no `//`, query or fragment, and must not be under `/_/` (a secured
+page's login form posts back to the URL as requested). The target is routed
+like any other request, so a client outside a gated target's ranges gets
+403, and nothing about the target is revealed. Rewrites do not chain, and an
+exact redirect on the same path wins. Links in the target page resolve against
+the requested URL, so the target should use absolute links. Bad entries are
+dropped and logged. For example, to serve the listing at `/lhv/` itself:
 
 ```json
 {"/lhv/": "/lhv/index/"}
@@ -164,11 +180,11 @@ weak and includes a hash of the snippet, so changing the snippet changes it.
 
 Everything except the R2 bucket and the `LOGIN_LIMIT` Durable Object (both in
 `wrangler.toml`, see "Secured cookies") is a Worker secret (`COOKIE_SECRET`,
-`TOKEN_<MACHINE>`, `IP_GATES` and `ANALYTICS_SNIPPET`) except `REDIRECTS`, which
-is a plaintext variable so it can be read back in the dashboard. `IP_GATES`,
-`REDIRECTS` and `ANALYTICS_SNIPPET` are optional. `wrangler.toml` has no
-`[vars]` block and sets `keep_vars = true`. `IP_GATES` and
-`REDIRECTS` are parsed once per Worker isolate, so a bad value is logged once
+`TOKEN_<MACHINE>`, `IP_GATES` and `ANALYTICS_SNIPPET`) except `REDIRECTS` and
+`REWRITES`, which are plaintext variables so they can be read back in the
+dashboard. `IP_GATES`, `REDIRECTS`, `REWRITES` and `ANALYTICS_SNIPPET` are
+optional. `wrangler.toml` has no `[vars]` block and sets `keep_vars = true`.
+`IP_GATES`, `REDIRECTS` and `REWRITES` are parsed once per Worker isolate, so a bad value is logged once
 rather than on every request. Bad `REDIRECTS` entries are dropped and logged:
 a target that is not a non-empty string, a target that is neither `/...` nor a
 full URL, a slug key containing `/`, the key `/`, a key ending in more than one
@@ -205,14 +221,15 @@ slug to a target path:
 {"old-overview":"/acme/old-overview/"}
 ```
 
-`REDIRECTS` is a plaintext variable, not a secret. Set it with a deploy:
+`REDIRECTS` and `REWRITES` are plaintext variables, not secrets. Set them
+with a deploy:
 
 ```sh
-npx wrangler deploy --var REDIRECTS:"$(jq -c . redirects.json)"
+npx wrangler deploy --var REDIRECTS:"$(jq -c . redirects.json)" --var REWRITES:"$(jq -c . rewrites.json)"
 ```
 
-You can also edit it in the dashboard. Later deploys keep it because
-`wrangler.toml` sets `keep_vars = true`, and the dashboard shows its value. A
+You can also edit them in the dashboard. Later deploys keep them because
+`wrangler.toml` sets `keep_vars = true`, and the dashboard shows their values. A
 variable and a secret cannot share a name, so to move an existing `REDIRECTS`
 secret, run `wrangler secret delete REDIRECTS` first, then deploy with `--var`.
 

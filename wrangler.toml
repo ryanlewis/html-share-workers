@@ -25,13 +25,15 @@ class_name = "LoginLimiter"
 tag = "v1"
 new_sqlite_classes = ["LoginLimiter"]
 
-# No [vars] block, so no values here: the repo is public. REDIRECTS is a
-# plaintext var held on Cloudflare; the rest are secrets, which survive deploys.
+# No [vars] block, so no values here: the repo is public. REDIRECTS and
+# REWRITES are plaintext vars held on Cloudflare; the rest are secrets, which
+# survive deploys.
 # The Worker expects:
 #   COOKIE_SECRET       secret: HMAC key for secured-page cookies
 #   TOKEN_<MACHINE>     secret: upload bearer token, one per machine
 #   IP_GATES            secret: JSON, gate name -> CIDR list (optional)
 #   REDIRECTS           var: JSON, slug -> target path (optional)
+#   REWRITES            var: JSON, exact path -> folder path served in place (optional)
 #   ANALYTICS_SNIPPET   secret: HTML added to <head> (optional)
 # See "Deploying" in the README. The `secrets.required` key is not used: it
 # cannot name the TOKEN_<MACHINE> secrets, and the last three are optional.

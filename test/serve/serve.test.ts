@@ -296,6 +296,57 @@ describe('exact-path redirects', () => {
   });
 });
 
+describe('rewrites', () => {
+  const REWRITES = JSON.stringify({ '/acme/': '/acme/index/' });
+  const headers = { 'CF-Connecting-IP': '192.0.2.10' };
+
+  beforeEach(async () => {
+    await putArtifactIndex(env.BUCKET, 'index', '<p>listing</p>', gated('acme'));
+  });
+
+  it.each(['/acme/', '/acme', '/acme/?a=1'])('serves the target at %s without a redirect', async (from) => {
+    const res = await fetchPath(from, { headers, redirect: 'manual' }, { REWRITES });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Location')).toBeNull();
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await res.text()).toBe('<p>listing</p>');
+  });
+
+  it('keeps the target behind its gate', async () => {
+    const res = await fetchPath('/acme/', { headers: { 'CF-Connecting-IP': '203.0.113.5' } }, { REWRITES });
+    expect(res.status).toBe(403);
+    expect(await res.text()).not.toContain('listing');
+  });
+
+  it('serves a public target', async () => {
+    await putArtifactIndex(env.BUCKET, 'deck', '<p>deck</p>', meta('public'));
+    const res = await fetchPath('/talk/', {}, { REWRITES: '{"/talk/":"/deck/"}' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<p>deck</p>');
+  });
+
+  it('404s a missing target', async () => {
+    expect((await fetchPath('/talk/', {}, { REWRITES: '{"/talk/":"/missing/"}' })).status).toBe(404);
+  });
+
+  it('loses to an exact redirect on the same path', async () => {
+    const res = await fetchPath('/acme/', { headers, redirect: 'manual' }, { REWRITES, REDIRECTS: '{"/acme/":"/elsewhere/"}' });
+    expect(res.status).toBe(308);
+    expect(res.headers.get('Location')).toBe('/elsewhere/');
+  });
+
+  it('leaves other paths under the key alone', async () => {
+    await putArtifactIndex(env.BUCKET, 'report', '<p>report</p>', gated('acme'));
+    const res = await fetchPath('/acme/report/', { headers }, { REWRITES });
+    expect(await res.text()).toBe('<p>report</p>');
+  });
+
+  it('does not chain', async () => {
+    const res = await fetchPath('/a/', { headers }, { REWRITES: '{"/a/":"/acme/","/acme/":"/acme/index/"}' });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('config parsing', () => {
   it('parses each config value once per isolate and logs a bad one once', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {});
