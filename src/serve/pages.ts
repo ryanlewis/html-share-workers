@@ -22,6 +22,7 @@ const STYLE = `
   li { margin: 0.4rem 0; }
   .meta { color: #666; font-size: 0.9rem; }
   .error { color: #b00020; }
+  footer { margin-top: 2rem; }
   input, button { font: inherit; padding: 0.3rem 0.5rem; }
   @media (prefers-color-scheme: dark) {
     body { color: #ddd; background: #161616; }
@@ -66,7 +67,10 @@ export function indexPage(artifacts: readonly ArtifactSummary[]): string {
     return `<li><a href="${escapeHtml(artifactUrl(a.scope, a.slug))}">${escapeHtml(title)}</a>${VISIBILITY_LABEL[a.scope.visibility]} <span class="meta">${escapeHtml(date)}</span></li>`;
   });
   const list = items.length > 0 ? `<ul>\n${items.join('\n')}\n</ul>` : '<p>Nothing listed yet.</p>';
-  return layout('share.rlew.io', `<h1>share.rlew.io</h1>\n${list}`);
+  return layout(
+    'share.rlew.io',
+    `<h1>share.rlew.io</h1>\n${list}\n<footer class="meta"><a href="https://rlew.io/">rlew.io</a></footer>`,
+  );
 }
 
 export type LoginError = 'wrong' | 'limited';
