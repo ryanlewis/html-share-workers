@@ -1,10 +1,11 @@
 import type { LoginLimiter } from './lib/login-limiter';
 
 /**
- * Worker bindings. Everything except BUCKET, LOGIN_LIMIT and REDIRECTS is a
- * secret, set with `wrangler secret put` (or in .dev.vars locally). REDIRECTS
- * is a plaintext var held on Cloudflare. wrangler.toml has no [vars] (the repo
- * is public) and sets keep_vars so a deploy leaves the var alone.
+ * Worker bindings. Everything except BUCKET, LOGIN_LIMIT, REDIRECTS and
+ * REWRITES is a secret, set with `wrangler secret put` (or in .dev.vars
+ * locally). REDIRECTS and REWRITES are plaintext vars held on Cloudflare.
+ * wrangler.toml has no [vars] (the repo is public) and sets keep_vars so a
+ * deploy leaves the vars alone.
  */
 export interface Env {
   /** Artifact storage. Key layout is in src/lib/artifacts.ts. */
@@ -28,6 +29,12 @@ export interface Env {
    * Unset means none. Read it with redirectsFor().
    */
   REDIRECTS?: string;
+  /**
+   * Plaintext var. JSON object of exact path -> folder path served in its place
+   * without a redirect, e.g. {"/acme/":"/acme/index/"}. Unset means none. Read
+   * it with rewritesFor().
+   */
+  REWRITES?: string;
   /**
    * Upload bearer tokens, one secret per machine: TOKEN_M5P, TOKEN_WORKLAPTOP, ...
    * Read them with machineTokens() rather than directly.

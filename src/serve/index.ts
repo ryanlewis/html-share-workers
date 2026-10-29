@@ -16,10 +16,11 @@ import { type Gates, gatesFor } from '../lib/gates';
 import type { LoginAttempt, LoginLimiter } from '../lib/login-limiter';
 import { verifyPassword } from '../lib/password';
 import { pointsAt, type Redirects, redirectLocation, redirectsFor, trimSlashes } from '../lib/redirects';
+import { rewritesFor } from '../lib/rewrites';
 import { COOKIE_NAME, cookieValues, setCookieHeader, signCookie, verifyCookie } from './cookie';
 import { forbiddenPage, indexPage, loginPage, notFoundPage } from './pages';
 
-// Serving for everything outside /api: artifacts, index, robots.txt, redirects.
+// Serving for everything outside /api: artifacts, index, robots.txt, redirects, rewrites.
 const serve = new Hono<AppEnv>();
 
 type Ctx = Context<AppEnv>;
@@ -416,14 +417,22 @@ serve.get('/', handle(generatedIndex));
 serve.get(
   '*',
   handle(async (c) => {
-    const url = new URL(c.req.url);
-    const path = splitPath(url.pathname);
+    let url = new URL(c.req.url);
+    let path = splitPath(url.pathname);
     if (!path) return notFound();
     // Exact-path redirects come first, so they work for gate roots such as
     // /lhv/. They only reveal a path, never content.
     const redirects = redirectsFor(c.env.REDIRECTS);
     const exact = exactRedirectFor(redirects, url, path);
     if (exact) return redirect(exact, 308);
+    // A rewrite swaps in its target path and routes that instead, so the
+    // target's gate, if any, still decides.
+    const rewrite = rewritesFor(c.env.REWRITES).get(trimSlashes(`/${path.decoded.join('/')}`));
+    if (rewrite !== undefined) {
+      url = new URL(`${rewrite}${url.search}`, url);
+      path = splitPath(url.pathname);
+      if (!path) return notFound();
+    }
     const [first, ...rest] = path.decoded;
     if (first === '_') return serveSecured(c, rest, path.trailingSlash);
     // A gate takes priority over a redirect or public artifact of the same name.
